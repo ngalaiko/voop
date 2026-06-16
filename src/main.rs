@@ -1,36 +1,10 @@
 #![no_std]
 #![no_main]
 
-use core::fmt::Write;
-use display_interface::DisplayError;
-use embassy_executor::{SpawnError, Spawner};
+use embassy_executor::Spawner;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::peripherals::USBD;
-use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
-use embassy_nrf::usb::Driver;
-use embassy_nrf::{bind_interrupts, peripherals, twim, usb};
 use embassy_time::Timer;
-use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
-use embassy_usb::driver::EndpointError;
-use embassy_usb::UsbDevice;
-use embedded_graphics::{
-    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
-    pixelcolor::BinaryColor,
-    prelude::*,
-    text::{Baseline, Text},
-};
-use heapless::String;
 use panic_halt as _;
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
-use static_cell::StaticCell;
-
-bind_interrupts!(struct Irqs {
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => usb::vbus_detect::InterruptHandler;
-    TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
-});
-
-type MyDriver = Driver<'static, peripherals::USBD, HardwareVbusDetect>;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -38,117 +12,252 @@ async fn main(spawner: Spawner) {
 
     let mut red = Output::new(p.P0_26, Level::High, OutputDrive::Standard);
 
-    let mut usb = Usb::new(p.USBD, spawner).expect("failed to initialize USB");
+    let Ok(mut screen) = screen::new(p.TWISPI0, p.P0_04, p.P0_05) else {
+        red.set_high();
+        return;
+    };
+
+    let Ok(gps) = gps::new(
+        spawner, p.UARTE0, p.P0_11, p.P0_12, p.TIMER0, p.PPI_CH0, p.PPI_CH1,
+    ) else {
+        red.set_high();
+        return;
+    };
 
     loop {
-        // Wait for host to connect (DTR = Data Terminal Ready)
-        usb.wait_connection().await;
-
-        Timer::after_millis(100).await;
-        let screen = Screen::new(p.TWISPI0, p.P0_04, p.P0_05);
-        match &screen {
-            Ok(_) => {
-                usb.write_packet(b"screen: ok\r\n").await.ok();
-            }
-            Err(e) => {
-                let mut buf: String<64> = String::new();
-                write!(buf, "screen error: {:?}\r\n", e).unwrap();
-                usb.write_packet(buf.as_bytes()).await.ok();
-            }
+        let Ok(state) = gps.read().await else {
+            red.set_high();
+            continue;
         };
 
-        loop {
-            red.set_low();
-            Timer::after_millis(500).await;
-            red.set_high();
-            Timer::after_millis(500).await;
-        }
+        screen
+            .print(screen::State {
+                lat: state.lat,
+                lon: state.lon,
+                speed_knots: state.speed_knots,
+            })
+            .unwrap();
+
+        Timer::after_secs(1).await;
     }
 }
 
-struct Screen {}
+mod gps {
+    use embassy_nrf::uarte::{self, Uarte};
+    use embassy_nrf::{bind_interrupts, peripherals};
 
-impl Screen {
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::mutex::Mutex;
+
+    bind_interrupts!(struct Irqs {
+        UARTE0 => uarte::InterruptHandler<peripherals::UARTE0>;
+    });
+
+    #[derive(Debug, Clone)]
+    pub enum Error {
+        ReadError(uarte::Error),
+        ParseError,
+    }
+
+    impl core::fmt::Display for Error {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Error::ReadError(e) => write!(f, "failed to read from GPS: {:?}", e),
+                Error::ParseError => write!(f, "failed to parse GPS data"),
+            }
+        }
+    }
+
+    impl core::error::Error for Error {}
+
+    #[derive(Debug, Clone)]
+    pub struct State {
+        pub lat: Option<f64>,
+        pub lon: Option<f64>,
+        pub speed_knots: Option<f32>,
+    }
+
+    static STATE: Mutex<CriticalSectionRawMutex, Result<State, Error>> = Mutex::new(Ok(State {
+        lat: None,
+        lon: None,
+        speed_knots: None,
+    }));
+
+    #[embassy_executor::task]
+    async fn task(
+        uarte0: peripherals::UARTE0,
+        rxd: peripherals::P0_11,
+        txd: peripherals::P0_12,
+        timer0: peripherals::TIMER0,
+        ppi_ch0: peripherals::PPI_CH0,
+        ppi_ch1: peripherals::PPI_CH1,
+    ) {
+        let uarte = Uarte::new(uarte0, Irqs, rxd, txd, uarte::Config::default());
+        let (_tx, mut rx) = uarte.split_with_idle(timer0, ppi_ch0, ppi_ch1);
+
+        let mut buf = [0u8; 82];
+        loop {
+            match rx.read_until_idle(&mut buf).await {
+                Ok(bytes_read) => {
+                    let reading =
+                        nmea::parse_bytes(&buf[..bytes_read]).map_err(|_| Error::ParseError);
+                    let mut state = STATE.lock().await;
+                    match reading {
+                        Ok(nmea::ParseResult::RMC(rmc)) => {
+                            *state = Ok(State {
+                                lat: rmc.lat,
+                                lon: rmc.lon,
+                                speed_knots: rmc.speed_over_ground,
+                            });
+                        }
+                        Ok(_) => {
+                            // Ignore other sentences for now
+                        }
+                        Err(e) => {
+                            *state = Err(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let mut state = STATE.lock().await;
+                    *state = Err(Error::ReadError(e));
+                }
+            };
+        }
+    }
+
+    pub struct Gps {}
+
+    impl Gps {
+        pub async fn read(&self) -> Result<State, Error> {
+            let state = STATE.lock().await;
+            state.clone()
+        }
+    }
+
+    pub fn new(
+        spawner: embassy_executor::Spawner,
+        uarte0: peripherals::UARTE0,
+        rxd: peripherals::P0_11,
+        txd: peripherals::P0_12,
+        timer0: peripherals::TIMER0,
+        ppi_ch0: peripherals::PPI_CH0,
+        ppi_ch1: peripherals::PPI_CH1,
+    ) -> Result<Gps, embassy_executor::SpawnError> {
+        spawner.spawn(task(uarte0, rxd, txd, timer0, ppi_ch0, ppi_ch1))?;
+        Ok(Gps {})
+    }
+}
+
+mod screen {
+    use display_interface::DisplayError;
+    use embassy_nrf::{bind_interrupts, peripherals, twim};
+    use embedded_graphics::{
+        mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+        pixelcolor::BinaryColor,
+        prelude::*,
+        text::{Baseline, Text},
+    };
+    use heapless::String;
+    use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
+    bind_interrupts!(struct Irqs {
+        TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
+    });
+
+    #[derive(Debug)]
+    pub enum Error {
+        InitError(DisplayError),
+        PrintError,
+    }
+
+    impl core::fmt::Display for Error {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Error::InitError(e) => write!(f, "failed to initialize screen: {:?}", e),
+                Error::PrintError => write!(f, "failed to print to screen"),
+            }
+        }
+    }
+
+    impl core::error::Error for Error {}
+
+    pub struct Screen {
+        display: Ssd1306<
+            ssd1306::prelude::I2CInterface<twim::Twim<'static, peripherals::TWISPI0>>,
+            DisplaySize128x64,
+            ssd1306::mode::BufferedGraphicsMode<DisplaySize128x64>,
+        >,
+    }
+
+    pub struct State {
+        pub lat: Option<f64>,
+        pub lon: Option<f64>,
+        pub speed_knots: Option<f32>,
+    }
+
+    impl Screen {
+        fn new(
+            i2c: peripherals::TWISPI0,
+            sda: peripherals::P0_04,
+            scl: peripherals::P0_05,
+        ) -> Result<Self, Error> {
+            let i2c = twim::Twim::new(i2c, Irqs, sda, scl, twim::Config::default());
+            let interface = I2CDisplayInterface::new(i2c);
+            let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+                .into_buffered_graphics_mode();
+            display.init().map_err(Error::InitError)?;
+
+            Ok(Self { display })
+        }
+
+        pub fn print(&mut self, state: State) -> Result<(), Error> {
+            use core::fmt::Write;
+
+            let text_style = MonoTextStyleBuilder::new()
+                .font(&FONT_6X10)
+                .text_color(BinaryColor::On)
+                .build();
+
+            let mut line1: String<32> = String::new();
+            match state.lat {
+                Some(lat) => write!(line1, "Lat: {:.5}", lat).map_err(|_| Error::PrintError)?,
+                None => write!(line1, "Lat: N/A").map_err(|_| Error::PrintError)?,
+            }
+            Text::with_baseline(&line1, Point::zero(), text_style, Baseline::Top)
+                .draw(&mut self.display)
+                .map_err(|_| Error::PrintError)?;
+
+            let mut line2: String<32> = String::new();
+            match state.lon {
+                Some(lon) => write!(line2, "Lon: {:.5}", lon).map_err(|_| Error::PrintError)?,
+                None => write!(line2, "Lon: N/A").map_err(|_| Error::PrintError)?,
+            }
+            Text::with_baseline(&line2, Point::new(0, 10), text_style, Baseline::Top)
+                .draw(&mut self.display)
+                .map_err(|_| Error::PrintError)?;
+
+            let mut line3: String<32> = String::new();
+            match state.speed_knots {
+                Some(speed) => {
+                    write!(line3, "Speed: {:.2} kn", speed).map_err(|_| Error::PrintError)?
+                }
+                None => write!(line3, "Speed: N/A").map_err(|_| Error::PrintError)?,
+            }
+            Text::with_baseline(&line3, Point::new(0, 20), text_style, Baseline::Top)
+                .draw(&mut self.display)
+                .map_err(|_| Error::PrintError)?;
+
+            self.display.flush().map_err(|_| Error::PrintError)?;
+            Ok(())
+        }
+    }
+
     pub fn new(
         i2c: peripherals::TWISPI0,
         sda: peripherals::P0_04,
         scl: peripherals::P0_05,
-    ) -> Result<Self, DisplayError> {
-        let i2c = twim::Twim::new(i2c, Irqs, sda, scl, twim::Config::default());
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
-            .into_buffered_graphics_mode();
-        display.init()?;
-
-        let text_style = MonoTextStyleBuilder::new()
-            .font(&FONT_6X10)
-            .text_color(BinaryColor::On)
-            .build();
-
-        Text::with_baseline("Hello!", Point::zero(), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
-
-        display.flush()?;
-        Ok(Self {})
-    }
-}
-
-struct Usb {
-    class: CdcAcmClass<'static, MyDriver>,
-}
-
-impl Usb {
-    pub fn new(usbd: USBD, spawner: Spawner) -> Result<Self, SpawnError> {
-        // USB driver — hands the hardware peripheral to embassy-usb
-        let driver = Driver::new(usbd, Irqs, HardwareVbusDetect::new(Irqs));
-
-        // Buffers the USB stack needs — must be 'static
-        static STATE: StaticCell<State> = StaticCell::new();
-        static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-        static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-        static MSOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-        static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-
-        let state = STATE.init(State::new());
-        let config_desc = CONFIG_DESCRIPTOR.init([0u8; 256]);
-        let bos_desc = BOS_DESCRIPTOR.init([0u8; 256]);
-        let msos_desc = MSOS_DESCRIPTOR.init([0u8; 256]);
-        let control_buf = CONTROL_BUF.init([0u8; 64]);
-
-        // Describe the USB device
-        let mut config = embassy_usb::Config::new(0xc0de, 0xcafe);
-        config.manufacturer = Some("Nikita");
-        config.product = Some("Bike Computer");
-        config.serial_number = Some("1");
-        config.max_power = 100;
-
-        // Build the USB device + attach CDC ACM class
-        let mut builder = embassy_usb::Builder::new(
-            driver,
-            config,
-            config_desc,
-            bos_desc,
-            msos_desc,
-            control_buf,
-        );
-        let class = CdcAcmClass::new(&mut builder, state, 64);
-        let usb = builder.build();
-
-        #[embassy_executor::task]
-        async fn usb_task(mut device: UsbDevice<'static, MyDriver>) {
-            device.run().await;
-        }
-
-        spawner.spawn(usb_task(usb))?;
-        Ok(Self { class })
-    }
-
-    pub async fn wait_connection(&mut self) {
-        self.class.wait_connection().await
-    }
-
-    pub async fn write_packet(&mut self, data: &[u8]) -> Result<(), EndpointError> {
-        self.class.write_packet(data).await
+    ) -> Result<Screen, Error> {
+        Screen::new(i2c, sda, scl)
     }
 }

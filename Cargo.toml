@@ -4,18 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
-embassy-nrf = { version = "0.3", features = ["nrf52840", "time-driver-rtc1"] }
-embassy-usb = { version = "0.3" }
-embassy-time = { version = "0.4" }
-static_cell = "2"
 cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7"
+embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.3", features = ["nrf52840", "time-driver-rtc1"] }
+embassy-time = { version = "0.4" }
+embassy-usb = { version = "0.3" }
+embassy-sync = "0.8"
 panic-halt = "1.0"
-heapless = "0.8"
 ssd1306 = "0.9"
 embedded-graphics = "0.8"
 display-interface = "0.5"
+heapless = "0.8"
+nmea = { version = "0.7", default-features = false }
 
 [profile.release]
 opt-level = "s"
