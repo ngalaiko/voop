@@ -1,5 +1,8 @@
 [build]
-target = "thumbv7em-none-eabihf"
+target = "thumbv7em-none-eabi"
 
-[target.thumbv7em-none-eabihf]
+[target.thumbv7em-none-eabi]
 rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[net]
+git-fetch-with-cli = true
