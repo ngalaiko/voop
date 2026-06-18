@@ -9,22 +9,27 @@ static_cell = "2"
 heapless = "0.8"
 panic-halt = "1.0"
 # cpu
-cortex-m = { version = "0.7.6", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
-# embassy — versions matching nrf52840 examples in embassy repo
-embassy-executor = { git = "https://github.com/embassy-rs/embassy", features = ["platform-cortex-m", "executor-thread"] }
-embassy-nrf = { git = "https://github.com/embassy-rs/embassy", features = ["nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac", "reset-pin-as-gpio"] }
-embassy-time = { git = "https://github.com/embassy-rs/embassy" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy" }
+# embassy — 0.10 to match nrf-sdc/trouble-host
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.10", features = ["nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac", "reset-pin-as-gpio"] }
+embassy-time = { version = "0.5" }
+embassy-sync = { version = "0.8" }
+embassy-futures = { version = "0.1" }
 # usb
-embassy-usb = { git = "https://github.com/embassy-rs/embassy" }
+embassy-usb = { version = "0.6" }
 # display
 ssd1306 = "0.9"
 embedded-graphics = "0.8"
 display-interface = "0.5"
 # gps
 nmea = { version = "0.7", default-features = false, features = ["GGA", "GLL", "GSA", "GSV", "RMC", "VTG", "ZDA", "TXT"] }
+# ble — nrf-sdc 0.4 is git-only (crates.io has only 0.3)
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "8efd935", features = ["nrf52840", "multirole"] }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "8efd935", features = ["critical-section-impl"] }
+trouble-host = { version = "0.7", features = ["scan", "gatt"] }
+bt-hci = { version = "0.9", default-features = false }
 
 [profile.release]
 opt-level = "s"
