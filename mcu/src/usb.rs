@@ -1,7 +1,7 @@
 use embassy_executor::Spawner;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::Driver;
-use embassy_nrf::{Peri, pac, peripherals};
+use embassy_nrf::{pac, peripherals, Peri};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::UsbDevice;

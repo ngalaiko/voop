@@ -24,7 +24,8 @@ ssd1306 = "0.9"
 embedded-graphics = "0.8"
 display-interface = "0.5"
 # gps
-nmea = { version = "0.7", default-features = false, features = ["GGA", "GLL", "GSA", "GSV", "RMC", "VTG", "ZDA", "TXT"] }
+nmea = { version = "0.7", default-features = false, features = ["RMC"] }
+chrono = { version = "0.4", default-features = false }
 # ble — nrf-sdc 0.4 is git-only (crates.io has only 0.3)
 nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "8efd935", features = ["nrf52840", "multirole"] }
 nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "8efd935", features = ["critical-section-impl"] }

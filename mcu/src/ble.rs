@@ -1,52 +1,49 @@
 use bt_hci::cmd::SyncCmd;
 use embassy_executor::Spawner;
-use embassy_nrf::{mode::Blocking, Peri, peripherals, rng};
+use embassy_nrf::{mode::Blocking, peripherals, rng, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
-use nrf_sdc::{self as sdc, mpsl};
+use embassy_sync::watch::Watch;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::vendor::ZephyrReadStaticAddrs;
+use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
 const CSC_SERVICE: Uuid = Uuid::new_short(0x1816);
 const CSC_MEASUREMENT: Uuid = Uuid::new_short(0x2A5B);
+const BATTERY_SERVICE: Uuid = Uuid::new_short(0x180F);
+const BATTERY_LEVEL: Uuid = Uuid::new_short(0x2A19);
 
-#[derive(Debug, Clone)]
-pub struct State {
-    pub cumulative_crank_revs: Option<u16>,
-    pub last_crank_event_time: Option<u16>, // 1/1024 s units
-}
-
-static STATE: Mutex<CriticalSectionRawMutex, Result<Option<State>, Error>> =
-    Mutex::new(Ok(None));
-
-pub async fn read() -> Result<Option<State>, Error> {
-    STATE.lock().await.clone()
-}
-
-// Signals the address of the first CSC sensor spotted during scanning.
-static SENSOR_ADDR: Signal<CriticalSectionRawMutex, Address> = Signal::new();
-
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Error {
-    SpawnError(embassy_executor::SpawnError),
-    SdcError(sdc::Error),
-    MpslError(mpsl::Error),
+    SpawnFailed,
+    MpslInitFailed,
+    SdcInitFailed,
+    RunnerCrashed,
 }
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Error::SpawnError(e) => write!(f, "spawn error: {:?}", e),
-            Error::SdcError(e) => write!(f, "SDC error: {:?}", e),
-            Error::MpslError(e) => write!(f, "MPSL error: {:?}", e),
+            Error::SpawnFailed => write!(f, "spawn failed"),
+            Error::MpslInitFailed => write!(f, "MPSL init failed"),
+            Error::SdcInitFailed => write!(f, "SDC init failed"),
+            Error::RunnerCrashed => write!(f, "BLE runner crashed"),
         }
     }
 }
 
 impl core::error::Error for Error {}
+
+// Cumulative crank revolutions — sent only when the value changes (bike moving).
+pub static CRANK_REVS: Watch<CriticalSectionRawMutex, Result<u16, Error>, 2> = Watch::new();
+
+// Battery percentage (0–100) — sent when the sensor reports a change.
+pub static BATTERY: Watch<CriticalSectionRawMutex, Result<u8, Error>, 1> = Watch::new();
+
+// Signals the address of the first CSC sensor spotted during scanning.
+static SENSOR_ADDR: Signal<CriticalSectionRawMutex, Address> = Signal::new();
 
 type MyController = nrf_sdc::SoftdeviceController<'static>;
 
@@ -55,7 +52,6 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-// Parses BLE AD structures to find a specific 16-bit service UUID.
 fn ad_has_uuid16(data: &[u8], target: u16) -> bool {
     let mut i = 0;
     while i < data.len() {
@@ -64,7 +60,6 @@ fn ad_has_uuid16(data: &[u8], target: u16) -> bool {
             break;
         }
         let ad_type = data[i + 1];
-        // 0x02 = Incomplete 16-bit UUID list, 0x03 = Complete 16-bit UUID list
         if ad_type == 0x02 || ad_type == 0x03 {
             let uuid_data = &data[i + 2..i + 1 + len];
             let mut j = 0;
@@ -80,7 +75,6 @@ fn ad_has_uuid16(data: &[u8], target: u16) -> bool {
     false
 }
 
-// Called by the RxRunner for each batch of extended advertising reports.
 struct CscEventHandler;
 
 impl EventHandler for CscEventHandler {
@@ -95,8 +89,6 @@ impl EventHandler for CscEventHandler {
 
 #[embassy_executor::task]
 async fn ble_task(controller: MyController) {
-    // Read the SDC's factory-assigned random static address so trouble-host uses
-    // AddrKind::RANDOM (not PUBLIC, which the nRF52840 doesn't have).
     let random_addr = match ZephyrReadStaticAddrs::new().exec(&controller).await {
         Ok(r) => Address::new(AddrKind::RANDOM, r.addr.addr),
         Err(e) => {
@@ -119,7 +111,8 @@ async fn ble_task(controller: MyController) {
     )
     .await;
     if let Err(e) = runner_result {
-        log::error!("[BLE] runner error: {:?}", e);
+        log::warn!("[BLE] runner error: {:?}", e);
+        CRANK_REVS.sender().send(Err(Error::RunnerCrashed));
     }
 }
 
@@ -127,8 +120,6 @@ async fn cadence_loop(stack: &Stack<'_, MyController, DefaultPacketPool>) {
     loop {
         SENSOR_ADDR.reset();
 
-        // Scan for any device advertising the CSC service UUID (0x1816).
-        // scan_ext with empty filter_accept_list scans all devices.
         log::info!("[BLE] Scanning for CSC sensor...");
         let central = stack.central();
         let mut scanner = Scanner::new(central);
@@ -145,12 +136,8 @@ async fn cadence_loop(stack: &Stack<'_, MyController, DefaultPacketPool>) {
             }
         };
 
-        // The RxRunner will call CscEventHandler::on_ext_adv_reports as packets arrive.
-        // Block here until a CSC device is signalled.
         let addr = SENSOR_ADDR.wait().await;
-        drop(session); // Stops the scan (ScanSession RAII guard cancels on drop).
-        // Yield so the runner can send LeSetExtScanEnable(false) to the controller
-        // before we issue LeExtCreateConn — the SDC rejects connect while scan is active.
+        drop(session);
         embassy_futures::yield_now().await;
 
         log::info!("[BLE] Found CSC sensor, connecting...");
@@ -163,7 +150,6 @@ async fn cadence_loop(stack: &Stack<'_, MyController, DefaultPacketPool>) {
             },
         };
 
-        // connect_ext keeps us in "extended" HCI mode, consistent with scan_ext above.
         let conn = match central.connect_ext(&connect_config).await {
             Ok(c) => c,
             Err(e) => {
@@ -197,17 +183,17 @@ async fn cadence_loop(stack: &Stack<'_, MyController, DefaultPacketPool>) {
                     return;
                 }
             };
-
-            let characteristic: Characteristic<[u8]> =
-                match client.characteristic_by_uuid(&service, &CSC_MEASUREMENT).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        log::warn!("[BLE] characteristic error: {:?}", e);
-                        return;
-                    }
-                };
-
-            let mut listener = match client.subscribe(&characteristic, false).await {
+            let characteristic: Characteristic<[u8]> = match client
+                .characteristic_by_uuid(&service, &CSC_MEASUREMENT)
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("[BLE] characteristic error: {:?}", e);
+                    return;
+                }
+            };
+            let mut csc_listener = match client.subscribe(&characteristic, false).await {
                 Ok(l) => l,
                 Err(e) => {
                     log::warn!("[BLE] subscribe error: {:?}", e);
@@ -215,31 +201,61 @@ async fn cadence_loop(stack: &Stack<'_, MyController, DefaultPacketPool>) {
                 }
             };
 
+            let mut battery_listener = 'bat: {
+                let Ok(svcs) = client.services_by_uuid(&BATTERY_SERVICE).await else {
+                    break 'bat None;
+                };
+                let Some(svc) = svcs.first().cloned() else {
+                    break 'bat None;
+                };
+                let Ok(bat_char): Result<Characteristic<[u8]>, _> =
+                    client.characteristic_by_uuid(&svc, &BATTERY_LEVEL).await
+                else {
+                    break 'bat None;
+                };
+                client.subscribe(&bat_char, false).await.ok()
+            };
+
             log::info!("[BLE] Subscribed to CSC measurement");
-            loop {
-                let notif = listener.next().await;
-                let data = notif.as_ref();
-                // CSC Measurement flags byte: bit 1 = crank revolution data present.
-                // When set: bytes 1-2 = cumulative crank revolutions (u16 LE),
-                //           bytes 3-4 = last crank event time (u16 LE, 1/1024 s units).
-                if data.len() >= 5 && (data[0] & 0x02) != 0 {
-                    let revs = u16::from_le_bytes([data[1], data[2]]);
-                    let event_time = u16::from_le_bytes([data[3], data[4]]);
-                    *STATE.lock().await = Ok(Some(State {
-                        cumulative_crank_revs: Some(revs),
-                        last_crank_event_time: Some(event_time),
-                    }));
-                    log::debug!("[BLE] CSC revs={} event_time={}", revs, event_time);
-                }
-            }
+            embassy_futures::join::join(
+                async {
+                    let crank_tx = CRANK_REVS.sender();
+                    let mut last_revs: Option<u16> = None;
+                    loop {
+                        let notif = csc_listener.next().await;
+                        let data = notif.as_ref();
+                        if data.len() >= 5 && (data[0] & 0x02) != 0 {
+                            let revs = u16::from_le_bytes([data[1], data[2]]);
+                            if Some(revs) != last_revs {
+                                crank_tx.send(Ok(revs));
+                                last_revs = Some(revs);
+                            }
+                            log::debug!("[BLE] CSC revs={}", revs);
+                        }
+                    }
+                },
+                async {
+                    let battery_tx = BATTERY.sender();
+                    match battery_listener {
+                        Some(ref mut listener) => loop {
+                            let notif = listener.next().await;
+                            let data = notif.as_ref();
+                            if let Some(&level) = data.first() {
+                                log::info!("[BLE] Battery: {}%", level);
+                                battery_tx.send(Ok(level));
+                            }
+                        },
+                        None => core::future::pending().await,
+                    }
+                },
+            )
+            .await;
         })
         .await;
 
         if let Err(e) = task_result {
             log::warn!("[BLE] GATT task error: {:?}", e);
         }
-
-        *STATE.lock().await = Ok(None);
         log::info!("[BLE] Disconnected, restarting scan");
     }
 }
@@ -278,13 +294,13 @@ pub fn init(
     static MPSL: StaticCell<MultiprotocolServiceLayer<'static>> = StaticCell::new();
     let mpsl = MPSL.init(
         mpsl::MultiprotocolServiceLayer::new(mpsl_p, crate::Irqs, lfclk_cfg)
-            .map_err(Error::MpslError)?,
+            .map_err(|_| Error::MpslInitFailed)?,
     );
-    spawner.spawn(mpsl_task(mpsl).map_err(Error::SpawnError)?);
+    spawner.spawn(mpsl_task(mpsl).map_err(|_| Error::SpawnFailed)?);
 
     let sdc_p = sdc::Peripherals::new(
-        ppi_ch17, ppi_ch18, ppi_ch20, ppi_ch21, ppi_ch22, ppi_ch23,
-        ppi_ch24, ppi_ch25, ppi_ch26, ppi_ch27, ppi_ch28, ppi_ch29,
+        ppi_ch17, ppi_ch18, ppi_ch20, ppi_ch21, ppi_ch22, ppi_ch23, ppi_ch24, ppi_ch25, ppi_ch26,
+        ppi_ch27, ppi_ch28, ppi_ch29,
     );
 
     static RNG_CELL: StaticCell<rng::Rng<'static, Blocking>> = StaticCell::new();
@@ -292,14 +308,14 @@ pub fn init(
 
     static SDC_MEM: StaticCell<sdc::Mem<4096>> = StaticCell::new();
     let sdc = sdc::Builder::new()
-        .map_err(Error::SdcError)?
+        .map_err(|_| Error::SdcInitFailed)?
         .support_ext_scan()
         .support_central()
         .central_count(1)
-        .map_err(Error::SdcError)?
+        .map_err(|_| Error::SdcInitFailed)?
         .build(sdc_p, rng_ref, mpsl, SDC_MEM.init(sdc::Mem::new()))
-        .map_err(Error::SdcError)?;
+        .map_err(|_| Error::SdcInitFailed)?;
 
-    spawner.spawn(ble_task(sdc).map_err(Error::SpawnError)?);
+    spawner.spawn(ble_task(sdc).map_err(|_| Error::SpawnFailed)?);
     Ok(())
 }

@@ -55,6 +55,7 @@ name = "bike-computer"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
+ "chrono",
  "cortex-m",
  "cortex-m-rt",
  "display-interface",
