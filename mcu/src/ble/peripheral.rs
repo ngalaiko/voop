@@ -1,43 +1,28 @@
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::watch::Watch;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
-// GPS fix pushed by gps::task; peripheral_loop reads it and notifies iOS.
-// Encoding: [flags u16 LE | speed cm/s u16 LE | lat i32 LE | lon i32 LE]
-// (matches the trimmed Location and Speed characteristic 0x2A67 layout)
-pub static GPS_LOCATION: Watch<CriticalSectionRawMutex, [u8; 10], 1> = Watch::new();
-
+// Custom 128-bit service UUID: bece0001-ede4-4b59-8c60-1ee44d963a05
+// Custom data characteristic:  bece0002-ede4-4b59-8c60-1ee44d963a05
 #[gatt_server]
 pub struct BikeServer {
-    cadence: CscService,
-    location: LocationService,
+    bike: BikeService,
 }
 
-// Cycling Speed and Cadence — standard SIG service 0x1816.
-// iOS's Core Bluetooth will find this without any custom UUID handling.
-#[gatt_service(uuid = "1816")]
-struct CscService {
-    // Flags (1 B) | crank_revs u16 LE | last_crank_event_time u16 LE
-    #[characteristic(uuid = "2a5b", read, notify)]
-    measurement: [u8; 5],
+#[gatt_service(uuid = "bece0001-ede4-4b59-8c60-1ee44d963a05")]
+struct BikeService {
+    // Packed DataPoint wire format, max 24 bytes. See store::DataPoint::pack().
+    #[characteristic(uuid = "bece0002-ede4-4b59-8c60-1ee44d963a05", notify)]
+    data: [u8; 24],
 }
 
-// Location and Navigation — standard SIG service 0x1819.
-// Exposes live GPS position + instantaneous speed.
-#[gatt_service(uuid = "1819")]
-struct LocationService {
-    // flags u16 LE | instantaneous_speed u16 LE | lat i32 LE | lon i32 LE
-    #[characteristic(uuid = "2a67", read, notify)]
-    location_and_speed: [u8; 10],
-}
-
-// Extended ad data: flags + service UUIDs + complete local name.
-// Extended PDUs have no 31-byte limit so everything fits in one packet.
+// Extended ADV data: flags + 128-bit service UUID + complete local name.
+// Type 0x07 = Complete list of 128-bit UUIDs (LE byte order).
+// UUID bece0001-ede4-4b59-8c60-1ee44d963a05 in LE: 05 3a 96 4d e4 1e 60 8c 4b 59 e4 ed 01 00 ce be
 const ADV_DATA: &[u8] = &[
     0x02, 0x01, 0x06, // Flags: LE General Discoverable, BR/EDR Not Supported
-    0x05, 0x03, 0x16, 0x18, 0x19, 0x18, // Complete 16-bit UUIDs: 0x1816, 0x1819
-    0x0D, 0x09, b'B', b'i', b'k', b'e', b'C', b'o', b'm', b'p', b'u', b't', b'e', b'r',
+    0x11, 0x07, // length=17, type=Complete 128-bit UUIDs
+    0x05, 0x3A, 0x96, 0x4D, 0xE4, 0x1E, 0x60, 0x8C, 0x4B, 0x59, 0xE4, 0xED, 0x01, 0x00, 0xCE,
+    0xBE, 0x0D, 0x09, b'B', b'i', b'k', b'e', b'C', b'o', b'm', b'p', b'u', b't', b'e', b'r',
 ];
 
 pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
@@ -86,6 +71,8 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
             }
         };
 
+        let handle = server.bike.data.handle;
+
         embassy_futures::join::join(
             // Drain GATT events so iOS can do service discovery and subscribe.
             async {
@@ -101,56 +88,43 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                     }
                 }
             },
-            // Push live data to iOS as long as it stays connected.
+            // Send buffered points newest-first, then stream live data.
             async {
-                notify_loop(stack, server).await;
+                // Phase 1: replay the ring buffer, newest first.
+                log::info!("[BLE peripheral] Replaying buffered points...");
+                loop {
+                    let point = crate::store::pop_newest().await;
+                    match point {
+                        None => break,
+                        Some(p) => {
+                            let packed = p.pack();
+                            if server.notify(stack, handle, &packed[..]).await.is_err() {
+                                log::warn!("[BLE peripheral] notify error during replay");
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                // Phase 2: live stream — one notification per new DataPoint.
+                let Some(mut updated_rx) = crate::store::UPDATED.receiver() else {
+                    log::error!("[BLE peripheral] UPDATED: no free receiver slot");
+                    return;
+                };
+                loop {
+                    updated_rx.changed().await;
+                    if let Some(p) = crate::store::peek_latest().await {
+                        let packed = p.pack();
+                        if server.notify(stack, handle, &packed[..]).await.is_err() {
+                            log::warn!("[BLE peripheral] notify error during live stream");
+                            return;
+                        }
+                    }
+                }
             },
         )
         .await;
 
         log::info!("[BLE peripheral] iOS disconnected");
     }
-}
-
-async fn notify_loop(
-    stack: &Stack<'_, super::MyController, DefaultPacketPool>,
-    server: &BikeServer<'_>,
-) {
-    let mut crank_rx = super::central::CRANK_REVS.receiver().unwrap();
-    let mut gps_rx = GPS_LOCATION.receiver().unwrap();
-    let mut last_event_time: u16 = 0;
-
-    embassy_futures::join::join(
-        async {
-            loop {
-                let Ok(revs) = crank_rx.changed().await else {
-                    continue;
-                };
-                last_event_time = last_event_time.wrapping_add(1024); // 1 s at 1/1024 s units
-                let measurement = [
-                    0x02, // Flags: Crank Revolution Data Present
-                    revs.to_le_bytes()[0],
-                    revs.to_le_bytes()[1],
-                    last_event_time.to_le_bytes()[0],
-                    last_event_time.to_le_bytes()[1],
-                ];
-                let handle = server.cadence.measurement.handle;
-                if let Err(e) = server.notify(stack, handle, &measurement).await {
-                    log::warn!("[BLE peripheral] CSC notify error: {:?}", e);
-                    break;
-                }
-            }
-        },
-        async {
-            loop {
-                let fix = gps_rx.changed().await;
-                let handle = server.location.location_and_speed.handle;
-                if let Err(e) = server.notify(stack, handle, &fix).await {
-                    log::warn!("[BLE peripheral] location notify error: {:?}", e);
-                    break;
-                }
-            }
-        },
-    )
-    .await;
 }

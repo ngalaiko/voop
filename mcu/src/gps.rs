@@ -4,7 +4,7 @@ use embassy_nrf::{peripherals, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum FixQuality {
     Autonomous,
     Differential,
@@ -33,7 +33,7 @@ impl core::fmt::Display for Error {
 impl core::error::Error for Error {}
 
 // Sent on each valid fix. Fix quality affects precision.
-pub static LOCATION: Watch<CriticalSectionRawMutex, Result<Location, Error>, 2> = Watch::new();
+pub static LOCATION: Watch<CriticalSectionRawMutex, Result<Location, Error>, 1> = Watch::new();
 
 // Unix timestamp — sent on every valid RMC sentence with date+time.
 pub static TIME: Watch<CriticalSectionRawMutex, Result<u32, Error>, 1> = Watch::new();

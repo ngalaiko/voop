@@ -32,7 +32,7 @@ impl core::fmt::Display for Error {
 impl core::error::Error for Error {}
 
 // Cumulative crank revolutions — sent only when the value changes (bike moving).
-pub static CRANK_REVS: Watch<CriticalSectionRawMutex, Result<u16, Error>, 2> = Watch::new();
+pub static CRANK_REVS: Watch<CriticalSectionRawMutex, Result<u16, Error>, 1> = Watch::new();
 
 // Battery percentage (0–100) — sent when the sensor reports a change.
 pub static BATTERY: Watch<CriticalSectionRawMutex, Result<u8, Error>, 1> = Watch::new();
