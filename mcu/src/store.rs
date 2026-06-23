@@ -9,7 +9,7 @@ use crate::gps::FixQuality;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DataPoint {
-    pub monotonic_ms: u64,
+    pub monotonic_ms: u32,
     pub crank_revs: Option<u16>,
     pub lat: Option<i32>,           // microdegrees (divide by 1_000_000 for degrees)
     pub lon: Option<i32>,           // microdegrees
@@ -62,7 +62,7 @@ impl DataPoint {
     }
 }
 
-const CAPACITY: usize = 2048;
+const CAPACITY: usize = 4096;
 
 struct Store {
     buf: Deque<DataPoint, CAPACITY>,
@@ -137,7 +137,7 @@ pub async fn run() {
         {
             Either4::First(Ok(revs)) => {
                 let point = DataPoint {
-                    monotonic_ms: Instant::now().as_millis(),
+                    monotonic_ms: Instant::now().as_millis() as u32,
                     crank_revs: Some(revs),
                     lat: current_lat,
                     lon: current_lon,
