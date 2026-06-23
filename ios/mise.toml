@@ -2,14 +2,16 @@
 swiftlint = "0.63.3"
 swiftformat = "0.61.1"
 "gem:xcpretty" = "latest"
-"gem:xcodeproj" = "1.27.0"
 
-[env]
-GEM_PATH = "{{env.HOME}}/.local/share/mise/installs/gem-xcodeproj/1.27.0/libexec"
+[tasks.generate]
+description = "Generate Xcode project from project.yml"
+sources = ["project.yml", "Voop/**/*.swift"]
+outputs = ["Voop.xcodeproj/project.pbxproj"]
+run = "xcodegen generate --spec project.yml"
 
 [tasks.build]
 description = "Build the app for iPhone 17 simulator"
-depends = [":setup-protocol"]
+depends = [":generate", ":xcframework"]
 run = """
 xcodebuild \
   -project Voop.xcodeproj \
@@ -69,10 +71,24 @@ xcodebuild -create-xcframework \
 rm -rf xcframework-headers
 """
 
-[tasks.setup-protocol]
-description = "Wire VoopProtocol.xcframework and VoopProtocol.swift into Voop.xcodeproj (idempotent)"
-depends = [":xcframework"]
-run = "ruby scripts/setup_protocol.rb"
+[tasks.flash]
+description = "Build and install on the first available iOS device"
+depends = [":generate", ":xcframework"]
+run = """
+DEVICE=$(xcrun devicectl list devices 2>/dev/null | grep -v unavailable | grep connected | awk '{print $4}' | head -1)
+if [ -z "$DEVICE" ]; then echo "No device found"; exit 1; fi
+xcodebuild \
+  -project Voop.xcodeproj \
+  -scheme Voop \
+  -destination "generic/platform=iOS" \
+  -derivedDataPath .build \
+  -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration \
+  build
+xcrun devicectl device install app \
+  --device "$DEVICE" \
+  "$(pwd)/.build/Build/Products/Debug-iphoneos/Voop.app"
+"""
 
 [tasks.lint]
 description = "Lint Swift sources with SwiftLint"

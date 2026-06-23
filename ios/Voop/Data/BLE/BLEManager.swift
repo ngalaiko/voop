@@ -16,8 +16,16 @@ final class BLEManager: NSObject {
     private var dataPointContinuation: AsyncStream<DataPoint>.Continuation?
     private(set) var dataPoints: AsyncStream<DataPoint>
 
-    enum ConnectionState {
+    enum ConnectionState: Equatable {
         case idle, scanning, connecting, connected, disconnected(Error?)
+
+        static func == (lhs: ConnectionState, rhs: ConnectionState) -> Bool {
+            switch (lhs, rhs) {
+            case (.idle, .idle), (.scanning, .scanning), (.connecting, .connecting), (.connected, .connected),
+                 (.disconnected, .disconnected): return true
+            default: return false
+            }
+        }
     }
 
     override init() {

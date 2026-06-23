@@ -45,12 +45,6 @@ async fn store_task() {
     store::run().await;
 }
 
-#[embassy_executor::task]
-async fn status_task(pin: embassy_nrf::Peri<'static, embassy_nrf::peripherals::P0_13>) {
-    let _green = Output::new(pin, Level::Low, OutputDrive::Standard);
-    core::future::pending::<()>().await;
-}
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
@@ -76,5 +70,4 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ble_task(ble).expect("ble: failed to spawn"));
     spawner.spawn(screen_task(screen).expect("screen: failed to spawn"));
     spawner.spawn(store_task().expect("store: failed to spawn"));
-    spawner.spawn(status_task(p.P0_13).expect("status: failed to spawn"));
 }

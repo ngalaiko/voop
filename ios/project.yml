@@ -22,14 +22,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.galaiko.voop
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: YT4992HVGM
         INFOPLIST_FILE: Voop/App/Info.plist
         CODE_SIGN_STYLE: Automatic
-    entitlements:
-      path: Voop/App/Voop.entitlements
-      properties:
-        com.apple.developer.healthkit: true
-        com.apple.developer.healthkit.access:
-          - health-records
-    dependencies: []
-    preBuildScripts: []
+    dependencies:
+      - framework: VoopProtocol.xcframework
+        embed: false

@@ -11,10 +11,17 @@ final class AppModel {
     private(set) var pendingPoints: [DataPoint] = []
     private(set) var gpsAnchor: GpsAnchor?
 
+    private(set) var isDevicePaired: Bool = UserDefaults.standard.bool(forKey: "isDevicePaired")
+
     init() {
         ble = BLEManager()
         health = HealthKitService()
         rides = (try? RideStore()) ?? { fatalError("Failed to create RideStore") }()
+    }
+
+    func markDevicePaired() {
+        isDevicePaired = true
+        UserDefaults.standard.set(true, forKey: "isDevicePaired")
     }
 
     func startReceiving() async {
