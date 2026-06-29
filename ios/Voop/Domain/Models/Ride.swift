@@ -6,7 +6,10 @@ struct Ride: Identifiable, Hashable {
     /// point and would mint a fresh UUID each time, so a UUID id churns the SwiftUI list (new
     /// identity per tick → full rebuild, lost row state). A segment's start date stays put as
     /// points append and changes only when a new segment begins.
-    var id: Date { startDate }
+    var id: Date {
+        startDate
+    }
+
     let startDate: Date
     let endDate: Date
     let points: [TimestampedPoint]

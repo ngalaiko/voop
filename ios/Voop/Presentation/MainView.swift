@@ -1,323 +1,197 @@
-import CoreLocation
 import SwiftUI
 
+/// The Dashboard — the app's single content tab, a stock grouped `List`: a live status section
+/// (refreshed each second), a device section, then the ride history grouped by day.
 struct MainView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(AppSettings.self) private var settings
-    @State private var showSettings = false
 
     var body: some View {
-        NavigationStack {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                let ongoing = appModel.ongoingRide(at: ctx.date)
-                let completed = completedRides(at: ctx.date)
-                List {
-                    Section {
-                        DeviceStatusRow(
-                            connectionState: appModel.ble.connectionState,
-                            deviceStatus: appModel.ble.deviceStatus
-                        )
-                        SensorStatusRow(
-                            connectionState: appModel.ble.connectionState,
-                            deviceStatus: appModel.ble.deviceStatus,
-                            isLive: sensorIsLive(at: ctx.date)
-                        )
-                    }
+        let groups = dayGroups()
 
-                    if case .connected = appModel.ble.connectionState {
-                        Section("Current") {
-                            CurrentValuesRow(
-                                rpm: appModel.liveRpm(at: ctx.date),
-                                location: appModel.currentLocation
-                            )
-                        }
-                    }
-
-                    if let ride = ongoing {
-                        Section {
-                            RidingRow(ride: ride, now: ctx.date)
-                        }
-                    }
-
-                    if !completed.isEmpty {
-                        Section("Rides") {
-                            ForEach(Array(completed.reversed())) { ride in
-                                NavigationLink(destination: RideDetailView(ride: ride)) {
-                                    CompletedRideRow(ride: ride)
-                                }
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        appModel.deleteRide(ride)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if ongoing == nil && completed.isEmpty {
-                        EmptyRidesView()
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
-                }
-                .listStyle(.insetGrouped)
-            }
-            .navigationTitle("Voop")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gear")
-                    }
+        List {
+            Section("Status") {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    liveStatus(at: ctx.date)
                 }
             }
-            .sheet(isPresented: $showSettings) {
-                SettingsView()
-                    .environment(appModel)
-                    .environment(settings)
+
+            Section("Device") {
+                LabeledContent("Voop Device") { deviceValue }
+                LabeledContent("Cadence Sensor") { sensorValue }
             }
-        }
-    }
 
-    /// The cadence sensor counts as live if the device reports it connected, or — since
-    /// that status/battery report is infrequent — if a cadence reading arrived recently.
-    private func sensorIsLive(at now: Date) -> Bool {
-        guard case .connected = appModel.ble.connectionState else { return false }
-        if appModel.ble.deviceStatus?.sensorConnected == true { return true }
-        if let last = appModel.lastCadenceDate,
-           now.timeIntervalSince(last) < AppModel.liveCadenceTimeout { return true }
-        return false
-    }
-
-    private func completedRides(at now: Date) -> [Ride] {
-        var rides = appModel.detectedRides
-        if appModel.ongoingRide(at: now) != nil {
-            rides = Array(rides.dropLast())
-        }
-        return rides.filter { DetectRides.qualifies($0, settings: settings) }
-    }
-}
-
-private struct DeviceStatusRow: View {
-    let connectionState: BLEManager.ConnectionState
-    let deviceStatus: DeviceStatus?
-
-    var body: some View {
-        HStack {
-            Text("Device")
-            Spacer()
-            batteryView
-            statusIcon
-        }
-    }
-
-    @ViewBuilder
-    private var batteryView: some View {
-        if case .connected = connectionState, let bat = deviceStatus?.mcuBattery {
-            HStack(spacing: 3) {
-                if bat.state == .charging {
-                    Image(systemName: "bolt.fill")
-                        .foregroundStyle(.yellow)
-                        .font(.caption)
+            if groups.isEmpty {
+                Section("Rides") {
+                    Text("No rides yet").foregroundStyle(.secondary)
                 }
-                Text("\(bat.percent)%")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch connectionState {
-        case .connected:
-            Image(systemName: "circle.fill")
-                .foregroundStyle(.green)
-                .font(.caption2)
-        case .scanning, .connecting:
-            ProgressView()
-                .controlSize(.small)
-        default:
-            Image(systemName: "circle.fill")
-                .foregroundStyle(.secondary)
-                .font(.caption2)
-        }
-    }
-}
-
-private struct SensorStatusRow: View {
-    let connectionState: BLEManager.ConnectionState
-    let deviceStatus: DeviceStatus?
-    /// Whether the sensor is actually reporting cadence (see `sensorIsLive`).
-    let isLive: Bool
-
-    var body: some View {
-        HStack {
-            Text("Cadence")
-            Spacer()
-            batteryView
-            statusIcon
-        }
-    }
-
-    @ViewBuilder
-    private var batteryView: some View {
-        // Show the battery whenever the sensor has reported it — independent of the
-        // live state, since the battery report lags behind the cadence stream.
-        if case .connected = connectionState, let bat = deviceStatus?.sensorBattery {
-            Text("\(bat)%")
-                .foregroundStyle(.secondary)
-                .font(.subheadline)
-        }
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch connectionState {
-        case .connected:
-            if isLive {
-                Image(systemName: "circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.caption2)
             } else {
-                Text("Searching…")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
+                ForEach(groups) { group in
+                    Section {
+                        ForEach(group.rides) { ride in
+                            NavigationLink(value: ride) { rideRow(ride) }
+                                .swipeActions(edge: .trailing) {
+                                    Button("Delete", role: .destructive) { appModel.deleteRide(ride) }
+                                }
+                        }
+                    } header: {
+                        HStack {
+                            Text(dayLabel(group.day))
+                            Spacer()
+                            Text("\(VoopFormat.kilometers(group.totalMeters, fractionDigits: 1)) km")
+                        }
+                    }
+                }
             }
-        case .scanning, .connecting:
-            ProgressView()
-                .controlSize(.small)
-        default:
-            Image(systemName: "circle.fill")
-                .foregroundStyle(.secondary)
-                .font(.caption2)
         }
-    }
-}
-
-private struct RidingRow: View {
-    @Environment(AppSettings.self) private var settings
-    let ride: Ride
-    let now: Date
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "bicycle")
-                .foregroundStyle(.red)
-            Text("Riding")
-                .fontWeight(.semibold)
-                .foregroundStyle(.red)
-            Spacer()
-            Text(distance)
-                .foregroundStyle(.secondary)
-            Divider()
-                .frame(height: 20)
-            Text(elapsed)
-                .foregroundStyle(.secondary)
+        .navigationTitle("Voop")
+        .navigationDestination(for: Ride.self) { ride in
+            RideDetailView(ride: ride)
         }
     }
 
-    private var elapsed: String {
-        Duration.seconds(now.timeIntervalSince(ride.startDate))
+    // MARK: - Live status
+
+    @ViewBuilder
+    private func liveStatus(at now: Date) -> some View {
+        if let ride = appModel.ongoingRide(at: now) {
+            let rpm = appModel.liveRpm(at: now)
+            let speed = Double(rpm) / 60.0 * config.gearRatio * config.wheelCircumferenceMeters * 3.6
+            let dist = CalculateMetrics.cadenceDistance(points: ride.points, config: config)
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Riding", systemImage: "figure.outdoor.cycle")
+                    .font(.headline)
+                    .foregroundStyle(.orange)
+                HStack(spacing: 20) {
+                    metric(String(format: "%.1f", speed), "km/h")
+                    metric("\(rpm)", "rpm")
+                    metric(VoopFormat.kilometers(dist), "km")
+                }
+                Text("Elapsed \(elapsed(since: ride.startDate, now: now))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        } else {
+            Label("Ready to ride", systemImage: "bicycle")
+        }
+    }
+
+    private func metric(_ value: String, _ unit: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Text(value).font(.title3.monospacedDigit())
+            Text(unit).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func elapsed(since start: Date, now: Date) -> String {
+        Duration.seconds(now.timeIntervalSince(start))
             .formatted(.time(pattern: .hourMinuteSecond(padHourToLength: 2)))
     }
 
-    private var distance: String {
-        let config = CalculateMetrics.Config(
-            gearRatio: settings.gearRatio,
-            wheelCircumferenceMeters: settings.wheelCircumferenceMeters
-        )
-        let meters = CalculateMetrics.cadenceDistance(points: ride.points, config: config)
-        return Measurement(value: meters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+    // MARK: - Device status
+
+    private func connectedValue(percent: Int?) -> Text {
+        let connected = Text("Connected").foregroundStyle(.green)
+        guard let percent else { return connected }
+        return connected + Text(" · \(percent)%").foregroundStyle(.secondary)
     }
-}
 
-private struct CompletedRideRow: View {
-    let ride: Ride
-    @Environment(AppSettings.self) private var settings
+    private var deviceValue: Text {
+        switch appModel.ble.connectionState {
+        case .connected:
+            connectedValue(percent: appModel.ble.deviceStatus.map { Int($0.mcuBattery.percent) })
+        case .scanning, .connecting:
+            Text("Searching…").foregroundStyle(.secondary)
+        default:
+            Text("Offline").foregroundStyle(.secondary)
+        }
+    }
 
-    var body: some View {
-        let config = CalculateMetrics.Config(
-            gearRatio: settings.gearRatio,
-            wheelCircumferenceMeters: settings.wheelCircumferenceMeters
-        )
-        let metrics = CalculateMetrics.compute(ride: ride, config: config)
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ride.startDate.formatted(date: .abbreviated, time: .omitted))
-                    .font(.headline)
-                Text(ride.clockRange)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+    private var sensorValue: Text {
+        guard case .connected = appModel.ble.connectionState else {
+            return Text("Offline").foregroundStyle(.secondary)
+        }
+        let live = appModel.ble.deviceStatus?.sensorConnected == true
+            || (appModel.lastCadenceDate.map { Date.now.timeIntervalSince($0) < AppModel.liveCadenceTimeout } ?? false)
+        guard live else { return Text("Searching…").foregroundStyle(.secondary) }
+        return connectedValue(percent: appModel.ble.deviceStatus?.sensorBattery.map(Int.init))
+    }
+
+    // MARK: - Ride rows
+
+    private func rideRow(_ ride: Ride) -> some View {
+        LabeledContent {
             VStack(alignment: .trailing, spacing: 2) {
-                Text(
-                    Measurement(value: metrics.totalDistanceMeters, unit: UnitLength.meters)
-                        .formatted(.measurement(width: .abbreviated, usage: .road))
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                Text(detail(metrics))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(distance(ride))
+                Text(avgCadence(ride)).font(.subheadline).foregroundStyle(.secondary)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(startTime(ride))
+                Text(durationLabel(ride)).font(.subheadline).foregroundStyle(.secondary)
             }
         }
     }
 
-    private func detail(_ metrics: RideMetrics) -> String {
-        let duration = Duration.seconds(ride.duration).formatted(.time(pattern: .hourMinute))
-        guard metrics.averageCadenceRpm > 0 else { return duration }
-        return "\(duration) · \(Int(metrics.averageCadenceRpm)) rpm"
+    private func dayLabel(_ day: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) { return "Today" }
+        if cal.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    private func startTime(_ ride: Ride) -> String {
+        ride.startDate.formatted(
+            .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
+                .locale(Locale(identifier: "en_GB"))
+        )
+    }
+
+    private func durationLabel(_ ride: Ride) -> String {
+        let minutes = Int(ride.duration) / 60
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes) min"
+    }
+
+    private func distance(_ ride: Ride) -> String {
+        VoopFormat.distance(distanceMeters(ride))
+    }
+
+    private func avgCadence(_ ride: Ride) -> String {
+        "avg \(Int(CalculateMetrics.compute(ride: ride, config: config).averageCadenceRpm)) rpm"
+    }
+
+    // MARK: - Data
+
+    private var config: CalculateMetrics.Config {
+        .init(gearRatio: settings.gearRatio, wheelCircumferenceMeters: settings.wheelCircumferenceMeters)
+    }
+
+    private func distanceMeters(_ ride: Ride) -> Double {
+        CalculateMetrics.cadenceDistance(points: ride.points, config: config)
+    }
+
+    private func dayGroups() -> [DayGroup] {
+        let ongoingID = appModel.ongoingRide()?.id
+        let rides = appModel.detectedRides
+            .filter { $0.id != ongoingID && DetectRides.qualifies($0, settings: settings) }
+            .sorted { $0.startDate > $1.startDate }
+
+        let calendar = Calendar.current
+        let buckets = Dictionary(grouping: rides) { calendar.startOfDay(for: $0.startDate) }
+        return buckets.keys.sorted(by: >).map { day in
+            let dayRides = buckets[day]!.sorted { $0.startDate > $1.startDate }
+            let total = dayRides.reduce(0.0) { $0 + distanceMeters($1) }
+            return DayGroup(day: day, rides: dayRides, totalMeters: total)
+        }
     }
 }
 
-private struct CurrentValuesRow: View {
-    let rpm: Int
-    let location: CLLocationCoordinate2D?
-
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Label("Cadence", systemImage: "arrow.clockwise")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(rpm) rpm")
-                    .font(.title3.monospacedDigit())
-                    .fontWeight(.medium)
-            }
-            if let location {
-                HStack {
-                    Label("Location", systemImage: "location.fill")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.5f, %.5f", location.latitude, location.longitude))
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-}
-
-private struct EmptyRidesView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "bicycle")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("No rides yet")
-                .font(.headline)
-            Text("Connect your device and start pedaling.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+struct DayGroup: Identifiable {
+    let day: Date
+    let rides: [Ride]
+    let totalMeters: Double
+    var id: Date {
+        day
     }
 }

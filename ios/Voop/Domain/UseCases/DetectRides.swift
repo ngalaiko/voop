@@ -86,10 +86,10 @@ enum DetectRides {
     /// live-streamed points, so `receivedAt` is a reliable fallback when there's no fix.
     static func absoluteDate(for raw: RawPoint) -> Date {
         switch raw.dataPoint.time {
-        case .unix(let s):
-            return Date(timeIntervalSince1970: TimeInterval(s))
+        case let .unix(s):
+            Date(timeIntervalSince1970: TimeInterval(s))
         case .monotonic:
-            return raw.receivedAt
+            raw.receivedAt
         }
     }
 }

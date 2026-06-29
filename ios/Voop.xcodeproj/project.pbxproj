@@ -29,11 +29,14 @@
 		AA27EC83D52A6F2E65C6ABBB /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2A24DDDC06EF51D40A1C8CB2 /* SwiftUI.framework */; };
 		AFDFA9C5984D293F70EDBCDD /* RideLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3602E80E9C53F626AA8573 /* RideLiveActivity.swift */; };
 		B0D3B9947B45DAE91E59B2DA /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CDCADF750CDB0C0C3CDE07BC /* WidgetKit.framework */; };
+		B42B847B9BAE590E038C3386 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F00F253C93A93A378053082 /* Formatters.swift */; };
 		BF3CB19613C9A1DD066852C3 /* RideActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D319CD2F358B8FBFBA796AEC /* RideActivityAttributes.swift */; };
 		BFC659FED8FE5F2233C5D9DE /* PointStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3766BD67795C9B515F2486 /* PointStore.swift */; };
 		D182ED6B62B5723E06DDE5EF /* CalculateMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A2B0D8169BCE14088D32E10 /* CalculateMetricsTests.swift */; };
 		D1E0A1862F5CBFBCEA68DE9D /* MCUPeripheral.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34C6132BE16B2FC6F0F3FC3E /* MCUPeripheral.swift */; };
+		DB5C63421FFCBDAE17E5EC11 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A860B5266B8F9CF030CC353 /* DemoData.swift */; };
 		E6FBA534D5E9C839C8D0BAF3 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CD3324FBDA929D8A315D4B /* SettingsView.swift */; };
+		E816C349692E70F683752C69 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5368C6D6371FD4DE59571CAD /* RootTabView.swift */; };
 		FCAEFF74C16F8E7763B317F1 /* RideActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D319CD2F358B8FBFBA796AEC /* RideActivityAttributes.swift */; };
 /* End PBXBuildFile section */
 
@@ -82,12 +85,15 @@
 		379D9CDF976DA71F4375E6B0 /* CalculateMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculateMetrics.swift; sourceTree = "<group>"; };
 		3F99DEC45EEEC577A6BF3754 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		4745F1500E5A41D671BE7824 /* VoopTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VoopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5368C6D6371FD4DE59571CAD /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		6E50F4C870EFEFAF5391D026 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		7B63B75A17284FF9B2A047C2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		7BC4FC3832AAE2EFFA6B7782 /* DetectRidesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectRidesTests.swift; sourceTree = "<group>"; };
 		81860989184021A98870F32E /* RideActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideActivityController.swift; sourceTree = "<group>"; };
 		8A2B0D8169BCE14088D32E10 /* CalculateMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculateMetricsTests.swift; sourceTree = "<group>"; };
+		8A860B5266B8F9CF030CC353 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
 		8CB05AFFA9C5717810E1C5B3 /* HealthKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitService.swift; sourceTree = "<group>"; };
+		8F00F253C93A93A378053082 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
 		9902762718B312424DF218CD /* BLEManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEManager.swift; sourceTree = "<group>"; };
 		A2CD3324FBDA929D8A315D4B /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A7B2BE52FEA9F3E8AA677B32 /* VoopWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = VoopWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -158,9 +164,12 @@
 			isa = PBXGroup;
 			children = (
 				0B95F2B14E8398297E4B3361 /* AppModel.swift */,
+				8A860B5266B8F9CF030CC353 /* DemoData.swift */,
 				3F99DEC45EEEC577A6BF3754 /* MainView.swift */,
 				81860989184021A98870F32E /* RideActivityController.swift */,
+				5368C6D6371FD4DE59571CAD /* RootTabView.swift */,
 				A2CD3324FBDA929D8A315D4B /* SettingsView.swift */,
+				474A33C5C1198867EFBFFF7D /* DesignSystem */,
 				CCE22CF6F9F339C920737614 /* Rides */,
 				02FC14204C4F3956B1E3E2EA /* Setup */,
 			);
@@ -175,6 +184,14 @@
 				C86B88CA3E3A3F6F8DA33BFE /* Persistence */,
 			);
 			path = Data;
+			sourceTree = "<group>";
+		};
+		474A33C5C1198867EFBFFF7D /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				8F00F253C93A93A378053082 /* Formatters.swift */,
+			);
+			path = DesignSystem;
 			sourceTree = "<group>";
 		};
 		4A0F99B105F3EEA69ACA7AC7 /* Shared */ = {
@@ -441,7 +458,9 @@
 				59AA7C6458C1C44DF07C2FF1 /* BLEManager.swift in Sources */,
 				84964D36EACCC4F4F0BEA90F /* CalculateMetrics.swift in Sources */,
 				2B773EFDE1CD771860A0A90A /* ContentView.swift in Sources */,
+				DB5C63421FFCBDAE17E5EC11 /* DemoData.swift in Sources */,
 				667D6CD52721E98594176401 /* DetectRides.swift in Sources */,
+				B42B847B9BAE590E038C3386 /* Formatters.swift in Sources */,
 				1C9B649A1A8864C5ABD3FE47 /* HealthKitService.swift in Sources */,
 				D1E0A1862F5CBFBCEA68DE9D /* MCUPeripheral.swift in Sources */,
 				22BA344A7633874B135E525E /* MainView.swift in Sources */,
@@ -451,6 +470,7 @@
 				BF3CB19613C9A1DD066852C3 /* RideActivityAttributes.swift in Sources */,
 				75F8106462561E8882514BA6 /* RideActivityController.swift in Sources */,
 				510A5B1169FFE4FECE6A5A62 /* RideDetailView.swift in Sources */,
+				E816C349692E70F683752C69 /* RootTabView.swift in Sources */,
 				E6FBA534D5E9C839C8D0BAF3 /* SettingsView.swift in Sources */,
 				2688E12FFD1A33FC898E61A4 /* SetupView.swift in Sources */,
 				6E63E6E480C82A9919D13F3A /* VoopApp.swift in Sources */,

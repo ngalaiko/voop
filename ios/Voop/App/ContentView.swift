@@ -6,7 +6,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if appModel.isDevicePaired {
-                MainView()
+                RootTabView()
             } else {
                 SetupView()
             }

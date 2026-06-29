@@ -50,6 +50,23 @@ final class AppModel {
         UserDefaults.standard.set(true, forKey: "isDevicePaired")
     }
 
+    #if DEBUG
+        /// Loads synthetic rides + a fake connected device for simulator visual checks.
+        func loadDemoData(riding: Bool) {
+            isDevicePaired = true
+            ble.applyDemoStatus()
+            var rides = DemoData.rides
+            if riding {
+                let now = Date.now
+                rides.append(DemoData.makeRide(start: now.addingTimeInterval(-12 * 60), minutes: 12,
+                                               lat: 47.374, lon: 8.544, cadence: 80))
+                currentRpm = 78
+                lastCadenceDate = now
+            }
+            detectedRides = rides
+        }
+    #endif
+
     func startReceiving() async {
         for await point in ble.dataPoints {
             if let revs = point.crankRevs {
@@ -57,7 +74,7 @@ final class AppModel {
                 if let last = lastCrankPoint {
                     let dt = now.timeIntervalSince(last.date)
                     let delta = Int32(revs) - Int32(last.revs)
-                    if dt > 0 && delta > 0 {
+                    if dt > 0, delta > 0 {
                         currentRpm = Int((Double(delta) / dt * 60.0).rounded())
                     }
                 }

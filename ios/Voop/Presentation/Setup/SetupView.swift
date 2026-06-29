@@ -1,37 +1,28 @@
 import SwiftUI
 
+/// Onboarding / pairing — a stock centered layout with a status line driven by the BLE state.
 struct SetupView: View {
     @Environment(AppModel.self) private var appModel
 
     var body: some View {
-        VStack(spacing: 32) {
-            Spacer()
-
+        VStack(spacing: 20) {
             Image(systemName: "bicycle.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 96, height: 96)
-                .foregroundStyle(.blue)
+                .font(.system(size: 80))
+                .foregroundStyle(.orange)
 
-            VStack(spacing: 8) {
-                Text("Set Up Voop")
-                    .font(.largeTitle.bold())
+            Text("Set Up Voop")
+                .font(.title.bold())
 
-                Text("Turn on your Voop device and bring it close to your iPhone.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
+            Text("Turn on your Voop device and hold it near your iPhone.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
 
             statusView
-
-            Spacer()
+                .padding(.top, 8)
         }
+        .padding()
         .onChange(of: appModel.ble.connectionState) { _, state in
-            if case .connected = state {
-                appModel.markDevicePaired()
-            }
+            if case .connected = state { appModel.markDevicePaired() }
         }
     }
 
@@ -39,17 +30,11 @@ struct SetupView: View {
     private var statusView: some View {
         switch appModel.ble.connectionState {
         case .scanning:
-            HStack(spacing: 8) {
-                ProgressView()
-                Text("Searching for device…")
-                    .foregroundStyle(.secondary)
-            }
+            HStack { ProgressView(); Text("Searching for device…") }
+                .foregroundStyle(.secondary)
         case .connecting:
-            HStack(spacing: 8) {
-                ProgressView()
-                Text("Connecting…")
-                    .foregroundStyle(.secondary)
-            }
+            HStack { ProgressView(); Text("Connecting…") }
+                .foregroundStyle(.secondary)
         case .connected:
             Label("Connected", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)

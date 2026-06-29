@@ -6,21 +6,27 @@ final class AppSettings {
     var rimBsdMillimeters: Int {
         didSet { UserDefaults.standard.set(rimBsdMillimeters, forKey: "rimBsdMillimeters") }
     }
+
     var tireWidthMillimeters: Int {
         didSet { UserDefaults.standard.set(tireWidthMillimeters, forKey: "tireWidthMillimeters") }
     }
+
     var chainringTeeth: Int {
         didSet { UserDefaults.standard.set(chainringTeeth, forKey: "chainringTeeth") }
     }
+
     var cogTeeth: Int {
         didSet { UserDefaults.standard.set(cogTeeth, forKey: "cogTeeth") }
     }
+
     var minCadenceRpm: Int {
         didSet { UserDefaults.standard.set(minCadenceRpm, forKey: "minCadenceRpm") }
     }
+
     var minDistanceMeters: Int {
         didSet { UserDefaults.standard.set(minDistanceMeters, forKey: "minDistanceMeters") }
     }
+
     var gapThresholdSeconds: Int {
         didSet { UserDefaults.standard.set(gapThresholdSeconds, forKey: "gapThresholdSeconds") }
     }

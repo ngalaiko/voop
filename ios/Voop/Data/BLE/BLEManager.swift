@@ -23,8 +23,8 @@ final class BLEManager: NSObject {
         static func == (lhs: ConnectionState, rhs: ConnectionState) -> Bool {
             switch (lhs, rhs) {
             case (.idle, .idle), (.scanning, .scanning), (.connecting, .connecting), (.connected, .connected),
-                 (.disconnected, .disconnected): return true
-            default: return false
+                 (.disconnected, .disconnected): true
+            default: false
             }
         }
     }
@@ -51,10 +51,22 @@ final class BLEManager: NSObject {
         central?.stopScan()
         connectionState = .idle
     }
+
+    #if DEBUG
+        /// Forces a connected state with a sample battery report, for simulator visual checks.
+        func applyDemoStatus() {
+            connectionState = .connected
+            deviceStatus = DeviceStatus(
+                mcuBattery: BatteryStatus(percent: 85, state: .discharging),
+                sensorConnected: true,
+                sensorBattery: 72
+            )
+        }
+    #endif
 }
 
 extension BLEManager: CBCentralManagerDelegate {
-    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+    nonisolated func centralManager(_: CBCentralManager, willRestoreState dict: [String: Any]) {
         // Extract the peripheral before crossing into the main actor — dict is [String: Any]
         // which isn't Sendable, so it must not be captured by the assumeIsolated closure.
         guard let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],

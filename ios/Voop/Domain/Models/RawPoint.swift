@@ -13,22 +13,21 @@ final class RawPoint {
     init(from point: DataPoint, receivedAt: Date = .now) {
         self.receivedAt = receivedAt
         switch point.time {
-        case .unix(let s): self.unixSeconds = Int(s)
-        case .monotonic(let ms): self.monotonicMs = Int(ms)
+        case let .unix(s): unixSeconds = Int(s)
+        case let .monotonic(ms): monotonicMs = Int(ms)
         }
-        self.latMicrodeg = point.latMicrodeg
-        self.lonMicrodeg = point.lonMicrodeg
-        self.crankRevs = point.crankRevs.map { Int32($0) }
+        latMicrodeg = point.latMicrodeg
+        lonMicrodeg = point.lonMicrodeg
+        crankRevs = point.crankRevs.map { Int32($0) }
     }
 
     var dataPoint: DataPoint {
-        let time: Time
-        if let s = unixSeconds {
-            time = .unix(seconds: UInt32(s))
+        let time: Time = if let s = unixSeconds {
+            .unix(seconds: UInt32(s))
         } else if let ms = monotonicMs {
-            time = .monotonic(ms: UInt32(ms))
+            .monotonic(ms: UInt32(ms))
         } else {
-            time = .monotonic(ms: 0)
+            .monotonic(ms: 0)
         }
         return DataPoint(
             time: time,
