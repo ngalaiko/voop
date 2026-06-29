@@ -1,6 +1,37 @@
 # voop
 
-idea is to have a thing that auto-detects my bike rides into apple health
+a screenless device to auto-record bike rides
+
+## Architecture
+
+```
+   Garmin cadence      Grove GPS
+   sensor (BLE)        (UART)
+         │                │
+         └───────┬────────┘
+                 ▼
+         ┌───────────────┐
+         │   MCU (Rust)  │   ring-buffers data points,
+         │   nRF52840    │   streams them over BLE
+         └───────┬───────┘
+                 │ BLE
+                 ▼
+         ┌───────────────┐
+         │  iOS (Swift)  │   persists points,
+         │     app       │   derives rides
+         └───────┬───────┘
+                 ▼
+           Apple Health
+```
+
+## Repo layout
+
+```
+mcu/           Rust/Embassy firmware for the nRF52840
+protocol/      shared wire format (DataPoint, Time) — single source of truth
+protocol-ffi/  UniFFI bindings → ios/Voop/Generated/voop_protocol.swift
+ios/           Swift/SwiftUI iOS app
+```
 
 ## Hardware
 
