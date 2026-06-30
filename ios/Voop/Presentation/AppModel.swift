@@ -163,11 +163,12 @@ final class AppModel {
     /// Every stored raw point as CSV, including the absolute date used for detection.
     func exportCSV() -> String {
         let points = allPoints
+        let dates = DetectRides.resolvedDates(for: points)
         let header = ["index", "receivedAt", "absoluteDate", "uptimeMs", "unixMillis",
                       "latMicrodeg", "lonMicrodeg", "crankRevs", "crankEventTime"]
         var lines = [header.joined(separator: ",")]
         for (index, p) in points.enumerated() {
-            let absolute = DetectRides.absoluteDate(for: p).ISO8601Format()
+            let absolute = (dates[ObjectIdentifier(p)] ?? DetectRides.absoluteDate(for: p)).ISO8601Format()
             let columns: [String] = [
                 String(index),
                 p.receivedAt.ISO8601Format(),
@@ -193,8 +194,11 @@ final class AppModel {
 
     /// Removes the raw points that make up a ride, then re-derives the ride list.
     func deleteRide(_ ride: Ride) {
+        // Use the same resolved (boot-session-aware) dates as detection, so a ride containing
+        // reconstructed pre-sync points selects exactly those points and leaves no orphans.
+        let dates = DetectRides.resolvedDates(for: allPoints)
         let toDelete = allPoints.filter { raw in
-            let date = DetectRides.absoluteDate(for: raw)
+            let date = dates[ObjectIdentifier(raw)] ?? DetectRides.absoluteDate(for: raw)
             return date >= ride.startDate && date <= ride.endDate
         }
         try? pointStore.delete(toDelete)

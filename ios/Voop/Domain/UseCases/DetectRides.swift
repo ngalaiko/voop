@@ -10,15 +10,17 @@ enum DetectRides {
     static func detect(points: [RawPoint], gapThreshold: TimeInterval) -> [Ride] {
         guard points.count >= 2 else { return [] }
 
-        // Order by reconstructed absolute time, not storage/arrival order: a buffered batch
-        // replays newest-first, so arrival order ≠ capture order. Each point self-describes its
-        // time (device unix when present), so sorting here restores the true timeline.
-        let points = points.sorted { absoluteDate(for: $0) < absoluteDate(for: $1) }
+        // Resolve each point's absolute time once (pre-sync points are reconstructed from a
+        // synced point in the same boot session), then order by it: a buffered batch and
+        // post-reboot points don't arrive in capture order, so this restores the true timeline.
+        let dates = resolvedDates(for: points)
+        func date(_ p: RawPoint) -> Date { dates[ObjectIdentifier(p)] ?? absoluteDate(for: p) }
+        let points = points.sorted { date($0) < date($1) }
 
         var segments: [[RawPoint]] = []
         var current: [RawPoint] = [points[0]]
         for point in points.dropFirst() {
-            if elapsed(from: current.last!, to: point) > gapThreshold {
+            if max(0, date(point).timeIntervalSince(date(current.last!))) > gapThreshold {
                 segments.append(current)
                 current = [point]
             } else {
@@ -41,7 +43,7 @@ enum DetectRides {
                     }
                 }
                 return TimestampedPoint(
-                    date: absoluteDate(for: raw),
+                    date: date(raw),
                     uptimeMs: p.uptimeMs,
                     coordinate: coord,
                     cumulativeCrankRevs: p.crankRevs,
@@ -84,13 +86,49 @@ enum DetectRides {
         return count > 0 ? sum / Double(count) : 0
     }
 
-    private static func elapsed(from a: RawPoint, to b: RawPoint) -> TimeInterval {
-        max(0, absoluteDate(for: b).timeIntervalSince(absoluteDate(for: a)))
+    /// Resolves an absolute date for every point. Points carrying device wall-clock time
+    /// (`unixMillis`) use it directly. Pre-sync points (`unixMillis == nil`, captured after a
+    /// reboot before the first GPS/iOS time sync) are reconstructed from a synced point in the
+    /// same boot session via the monotonic `uptimeMs` delta, instead of collapsing onto
+    /// `receivedAt`. A boot session that never synced falls back to `receivedAt`.
+    static func resolvedDates(for points: [RawPoint]) -> [ObjectIdentifier: Date] {
+        // Walk in arrival order. `uptimeMs` is monotonic within a boot and resets on reboot,
+        // so a decrease marks a new boot session.
+        let ordered = points.sorted { $0.receivedAt < $1.receivedAt }
+        var result: [ObjectIdentifier: Date] = [:]
+
+        func resolve(_ session: ArraySlice<RawPoint>) {
+            // The first synced point's (unixMillis − uptimeMs) offset anchors the whole session.
+            let offset = session.first { $0.unixMillis != nil }
+                .flatMap { a in a.unixMillis.map { $0 - a.uptimeMs } }
+            for p in session {
+                if let ms = p.unixMillis {
+                    result[ObjectIdentifier(p)] = Date(timeIntervalSince1970: Double(ms) / 1000)
+                } else if let offset {
+                    result[ObjectIdentifier(p)] =
+                        Date(timeIntervalSince1970: Double(offset + p.uptimeMs) / 1000)
+                } else {
+                    result[ObjectIdentifier(p)] = p.receivedAt
+                }
+            }
+        }
+
+        var sessionStart = 0
+        var i = 1
+        while i < ordered.count {
+            if ordered[i].uptimeMs < ordered[i - 1].uptimeMs {
+                resolve(ordered[sessionStart ..< i])
+                sessionStart = i
+            }
+            i += 1
+        }
+        if !ordered.isEmpty { resolve(ordered[sessionStart ..< ordered.count]) }
+        return result
     }
 
-    /// Absolute time for detection and metrics: the device's wall-clock estimate when it had
-    /// one (present on every point once synced, so buffered/replayed points stay correct),
-    /// otherwise the time iOS received the point — only the brief pre-first-sync tail.
+    /// Per-point fallback time: the device's wall-clock estimate when present, else the time
+    /// iOS received the point. `detect` and metrics go through `resolvedDates` instead, which
+    /// also reconstructs pre-sync points; this remains for single-point/contextless callers.
     static func absoluteDate(for raw: RawPoint) -> Date {
         if let ms = raw.unixMillis {
             return Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
