@@ -80,15 +80,19 @@ impl Gps {
                                     _ => None,
                                 };
                                 match (fix_quality, rmc.lat, rmc.lon) {
-                                    (Some(_fix), Some(lat), Some(lon)) => {
+                                    (Some(_fix), Some(lat), Some(lon))
+                                        if (-90.0..=90.0).contains(&lat)
+                                            && (-180.0..=180.0).contains(&lon) =>
+                                    {
                                         gps_tx.send(Some(GpsState {
                                             lat_microdeg: (lat * 1_000_000.0) as i32,
                                             lon_microdeg: (lon * 1_000_000.0) as i32,
                                         }));
                                         had_fix = true;
                                     }
-                                    // No valid fix this sentence — emit one loss event on the
-                                    // transition so consumers stop stamping stale coordinates.
+                                    // No valid fix — or a garbage/out-of-range coordinate — this
+                                    // sentence. Emit one loss event on the transition so consumers
+                                    // stop stamping stale coordinates.
                                     _ => {
                                         if had_fix {
                                             gps_tx.send(None);
