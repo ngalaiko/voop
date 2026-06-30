@@ -4,7 +4,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
-use embassy_time::{Duration, Ticker, with_timeout};
+use embassy_time::{Duration, Ticker, Timer};
 use heapless::Deque;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
@@ -185,19 +185,22 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                     Ok(a) => a,
                     Err(e) => {
                         log::warn!("[BLE peripheral] advertise error: {:?}", e);
+                        // Back off before retrying so a persistent failure doesn't tight-loop and
+                        // hammer the shared radio against the central's scanning.
+                        Timer::after(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
 
                 log::info!("[BLE peripheral] Waiting for connection...");
-                let conn = match with_timeout(Duration::from_secs(10), advertiser.accept()).await {
-                    Err(_) => {
-                        log::warn!("[BLE peripheral] accept timed out");
-                        continue;
-                    }
-                    Ok(Ok(c)) => c,
-                    Ok(Err(e)) => {
+                // Advertise until a phone connects — no timeout. A 10 s timeout previously
+                // re-advertised on a loop while idle, re-opening advertise/scan contention every
+                // 10 s and wasting power for no benefit.
+                let conn = match advertiser.accept().await {
+                    Ok(c) => c,
+                    Err(e) => {
                         log::warn!("[BLE peripheral] accept error: {:?}", e);
+                        Timer::after(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
