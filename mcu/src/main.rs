@@ -10,6 +10,7 @@ pub use irqs::Irqs;
 pub mod ble;
 pub mod clock;
 pub mod gps;
+pub mod imu;
 pub mod logger;
 pub mod screen;
 pub mod usb;
@@ -39,6 +40,11 @@ async fn screen_task(screen: screen::Screen) {
     screen.run().await;
 }
 
+#[embassy_executor::task]
+async fn imu_task(imu: imu::Imu) {
+    imu.run().await;
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
@@ -57,10 +63,12 @@ async fn main(spawner: Spawner) {
     )
     .expect("ble: failed to initialize");
     let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
+    let imu = imu::init(p.TWISPI1, p.P0_07, p.P0_27, p.P1_08, p.P0_11);
 
     spawner.spawn(usb_task(usb_runner).expect("usb: failed to spawn"));
     spawner.spawn(logger_task(logger).expect("logger: failed to spawn"));
     spawner.spawn(gps_task(gps).expect("gps: failed to spawn"));
     spawner.spawn(ble_task(ble).expect("ble: failed to spawn"));
     spawner.spawn(screen_task(screen).expect("screen: failed to spawn"));
+    spawner.spawn(imu_task(imu).expect("imu: failed to spawn"));
 }

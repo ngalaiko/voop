@@ -41,6 +41,7 @@ struct ScreenState {
     sensor_connected: bool,
     sensor_battery: Option<u8>,
     ios_connected: bool,
+    moving: Option<bool>,
     time: Option<(u8, u8)>,
 }
 
@@ -100,13 +101,18 @@ fn render(display: &mut Display, state: &ScreenState) -> Result<(), InternalErro
         .draw(display)
         .map_err(|_| InternalError::RenderError)?;
 
-    // Line 4: Connection status
-    let mut line: String<16> = String::new();
+    // Line 4: Connection + motion status
+    let mut line: String<24> = String::new();
     write!(
         line,
-        "iOS:{} CAD:{}",
+        "iOS:{} CAD:{} MOV:{}",
         if state.ios_connected { "Y" } else { "N" },
-        if state.sensor_connected { "Y" } else { "N" }
+        if state.sensor_connected { "Y" } else { "N" },
+        match state.moving {
+            None => "?",
+            Some(true) => "Y",
+            Some(false) => "N",
+        }
     )
     .map_err(|_| InternalError::RenderError)?;
     Text::with_baseline(&line, Point::new(0, 44), style, Baseline::Top)
@@ -184,6 +190,10 @@ impl Screen {
             log::error!("[Screen] IOS_CONNECTED: no free receiver slot");
             return;
         };
+        let Some(mut moving_rx) = crate::imu::MOVING.receiver() else {
+            log::error!("[Screen] MOVING: no free receiver slot");
+            return;
+        };
 
         let mut state = ScreenState {
             gps: None,
@@ -191,6 +201,7 @@ impl Screen {
             sensor_connected: false,
             sensor_battery: None,
             ios_connected: false,
+            moving: None,
             time: None,
         };
 
@@ -209,7 +220,7 @@ impl Screen {
             match select4(
                 select(gps_rx.changed(), crank_rx.changed()),
                 select(sensor_conn_rx.changed(), sensor_bat_rx.changed()),
-                ios_rx.changed(),
+                select(ios_rx.changed(), moving_rx.changed()),
                 ticker.next(),
             )
             .await
@@ -218,7 +229,8 @@ impl Screen {
                 Either4::First(Either::Second(sample)) => state.crank_revs = Some(sample.revs),
                 Either4::Second(Either::First(connected)) => state.sensor_connected = connected,
                 Either4::Second(Either::Second(bat)) => state.sensor_battery = Some(bat),
-                Either4::Third(connected) => state.ios_connected = connected,
+                Either4::Third(Either::First(connected)) => state.ios_connected = connected,
+                Either4::Third(Either::Second(moving)) => state.moving = Some(moving),
                 Either4::Fourth(()) => {
                     if let Some(millis) = crate::clock::now().await.unix_millis {
                         let seconds = millis / 1000;

@@ -4,6 +4,7 @@ use nrf_sdc::mpsl;
 bind_interrupts!(pub struct Irqs {
     UARTE0 => uarte::InterruptHandler<peripherals::UARTE0>;
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
+    TWISPI1 => twim::InterruptHandler<peripherals::TWISPI1>;
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler, mpsl::ClockInterruptHandler;
     RNG => rng::InterruptHandler<peripherals::RNG>;
