@@ -2,11 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- No healthkit.access array: that key requests *clinical records* (needs special
+	     Apple approval, and would be rejected in review) — writing workouts only needs the
+	     base HealthKit entitlement. -->
 	<key>com.apple.developer.healthkit</key>
 	<true/>
-	<key>com.apple.developer.healthkit.access</key>
-	<array>
-		<string>health-records</string>
-	</array>
 </dict>
 </plist>

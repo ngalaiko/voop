@@ -26,6 +26,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.galaiko.voop
         DEVELOPMENT_TEAM: 5S3AM79MK3
         INFOPLIST_FILE: Voop/App/Info.plist
+        # Wired here (not in the pbxproj, which xcodegen regenerates) so the HealthKit
+        # entitlement actually ships when HealthKitService gets implemented.
+        CODE_SIGN_ENTITLEMENTS: Voop/App/Voop.entitlements
         CODE_SIGN_STYLE: Automatic
     dependencies:
       - framework: VoopProtocol.xcframework
