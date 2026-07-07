@@ -25,7 +25,7 @@ final class AppModel {
     /// last rpm must not linger as if they were still pedaling.
     static let liveCadenceTimeout: TimeInterval = 5
 
-    private var lastCrankPoint: (revs: UInt16, date: Date)?
+    private var lastCrankPoint: (revs: UInt16, eventTime: UInt16, uptimeMs: UInt32, date: Date)?
 
     /// In-memory mirror of every stored point, kept in detection-time order. Detection reads
     /// this instead of re-fetching the whole store from disk on every incoming point.
@@ -85,17 +85,30 @@ final class AppModel {
     private func startReceiving() async {
         for await point in ble.dataPoints {
             do {
-                // Every point is a crank event, so it always carries a rev count.
+                // Every point is a crank event, so it always carries a rev count. Time the
+                // delta by the point's own clocks (crank event time, then MCU uptime), not BLE
+                // arrival: a reconnect replay delivers points milliseconds apart while the
+                // revs span real seconds — arrival-time math flashes thousands of rpm into
+                // the dashboard and the Live Activity.
                 let revs = point.crankRevs
                 let now = Date.now
                 if let last = lastCrankPoint {
-                    let dt = now.timeIntervalSince(last.date)
-                    let delta = Int32(revs) - Int32(last.revs)
-                    if dt > 0, delta > 0 {
+                    let delta = revs &- last.revs
+                    let uptimeDeltaMs = point.uptimeMs &- last.uptimeMs
+                    let close = uptimeDeltaMs > 0 && uptimeDeltaMs < 60000
+                    let ticks = point.crankEventTime &- last.eventTime
+                    let dt: TimeInterval = if close, ticks > 0 {
+                        TimeInterval(ticks) / 1024.0
+                    } else if close {
+                        TimeInterval(uptimeDeltaMs) / 1000.0
+                    } else {
+                        now.timeIntervalSince(last.date)
+                    }
+                    if dt > 0, delta > 0, delta < 1000 {
                         currentRpm = Int((Double(delta) / dt * 60.0).rounded())
                     }
                 }
-                lastCrankPoint = (revs: revs, date: now)
+                lastCrankPoint = (revs: revs, eventTime: point.crankEventTime, uptimeMs: point.uptimeMs, date: now)
                 lastCadenceDate = now
             }
             if let lat = point.latMicrodeg, let lon = point.lonMicrodeg {
