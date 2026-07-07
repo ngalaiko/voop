@@ -61,7 +61,10 @@ final class RideActivityController {
     /// Ends the active activity, if any, freezing the timer at the true ride duration. Idempotent.
     func end() async {
         guard let current = activity, let startDate = activeStartDate else { return }
-        let frozenEnd = max(startDate, activeEndDate ?? startDate)
+        // For an adopted activity that was never updated this session, `activeEndDate` is nil —
+        // fall back to the last data point its own content carries, not `startDate`, which
+        // would freeze the "Ride ended" card at 0:00.
+        let frozenEnd = max(startDate, activeEndDate ?? current.content.state.lastPointDate)
         activity = nil
         activeStartDate = nil
         activeEndDate = nil
