@@ -100,16 +100,23 @@ impl Gps {
                                         }
                                     }
                                 }
-                                if let (Some(date), Some(time)) = (rmc.fix_date, rmc.fix_time) {
-                                    let epoch = to_unix_epoch(
-                                        date.year(),
-                                        date.month() as u8,
-                                        date.day() as u8,
-                                        time.hour() as u8,
-                                        time.minute() as u8,
-                                        time.second() as u8,
-                                    );
-                                    crate::clock::set(epoch).await;
+                                // Anchor the wall clock only from sentences with a valid fix.
+                                // Pre-fix RMC (status V) carries RTC/default date-time — often
+                                // years off — and at 1 Hz it would out-shout the one-shot iOS
+                                // time sync, poisoning every DataPoint's unix_millis.
+                                if fix_quality.is_some() {
+                                    if let (Some(date), Some(time)) = (rmc.fix_date, rmc.fix_time)
+                                    {
+                                        let epoch = to_unix_epoch(
+                                            date.year(),
+                                            date.month() as u8,
+                                            date.day() as u8,
+                                            time.hour() as u8,
+                                            time.minute() as u8,
+                                            time.second() as u8,
+                                        );
+                                        crate::clock::set(epoch).await;
+                                    }
                                 }
                             }
                             Ok(_) | Err(_) => {}
