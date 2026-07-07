@@ -2,7 +2,9 @@
 target = "thumbv7em-none-eabihf"
 
 [target.thumbv7em-none-eabihf]
-rustflags = ["-C", "link-arg=-Tlink.x"]
+# flip-link places the stack *below* .data/.bss, so a stack overflow faults immediately
+# instead of silently corrupting the statics (the ring buffer sits right at the top).
+rustflags = ["-C", "linker=flip-link", "-C", "link-arg=-Tlink.x"]
 
 [net]
 git-fetch-with-cli = true

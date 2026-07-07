@@ -1,5 +1,6 @@
 [tools]
 "cargo:cargo-binutils" = "latest"
+"cargo:flip-link" = "latest"
 "cargo:uf2conv" = "latest"
 
 [tasks.build]
