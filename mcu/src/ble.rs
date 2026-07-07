@@ -111,11 +111,15 @@ pub fn init(
     rng_periph: Peri<'static, peripherals::RNG>,
 ) -> Result<Ble, Error> {
     let mpsl_p = mpsl::Peripherals::new(rtc0, timer0, temp, ppi_ch19, ppi_ch30, ppi_ch31);
+    // The XIAO nRF52840 carries a 32.768 kHz crystal — use it instead of the internal RC.
+    // The RC drifts hundreds of ppm (seconds/hour on the wall-clock anchor between GPS
+    // re-syncs) and needs periodic calibration wakeups; the crystal is ~10-50× tighter and
+    // cheaper to run. embassy's time driver is switched in main() to match.
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
-        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+        rc_ctiv: 0,
+        rc_temp_ctiv: 0,
+        accuracy_ppm: 50,
         skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer<'static>> = StaticCell::new();

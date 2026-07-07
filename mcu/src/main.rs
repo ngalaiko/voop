@@ -58,6 +58,8 @@ async fn watchdog_task(mut handle: embassy_nrf::wdt::WatchdogHandle) {
 async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
     config.debug = embassy_nrf::config::Debug::NotConfigured;
+    // Onboard 32.768 kHz crystal (matches the MPSL LFCLK config in ble.rs).
+    config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
 
     // Hardware watchdog, 8 s window, pet once a second from its own task. Without it a
