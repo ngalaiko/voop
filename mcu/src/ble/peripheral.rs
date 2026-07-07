@@ -65,17 +65,17 @@ impl Store {
         DATA_READY.signal(());
     }
 
-    /// Remove and return the oldest buffered point. Delivery is FIFO so iOS receives a
+    /// The oldest buffered point, without removing it. Delivery is FIFO so iOS receives a
     /// monotonic `uptime_ms` timeline.
-    fn pop_oldest(&mut self) -> Option<DataPoint> {
-        self.buf.pop_front()
+    fn peek_oldest(&self) -> Option<DataPoint> {
+        self.buf.front().copied()
     }
 
-    /// Put a point back at the front after a failed notify, so it's redelivered on the next
-    /// reconnect. Best-effort: if the buffer filled during the in-flight notify the point is
-    /// dropped (one point lost at disconnect — acceptable for a fitness logger).
-    fn requeue_front(&mut self, point: DataPoint) {
-        let _ = self.buf.push_front(point);
+    /// Drop the oldest buffered point — call only after it was accepted for delivery. Keeping
+    /// the point in the buffer until then means a disconnect or cancellation mid-notify can
+    /// only re-send it (iOS tolerates duplicates), never lose it.
+    fn pop_oldest(&mut self) {
+        self.buf.pop_front();
     }
 }
 
@@ -228,7 +228,6 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
 
                 IOS_CONNECTED.sender().send(true);
 
-                let stream_handle = server.bike.stream.handle;
                 let time_sync_handle = server.bike.time_sync.handle;
 
                 // select, not join: either side finishing (a disconnect) drops the other.
@@ -297,27 +296,41 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                             }
                         }
                     },
-                    // Drain the store oldest-first, popping each point only after iOS acks it
-                    // (notify Ok). Buffered (offline/disconnected) points are simply the oldest
-                    // entries, so they "replay" first; live points follow as they arrive — one
-                    // path, in order. On notify error we re-buffer the in-flight point and bail
-                    // so the connection loop re-advertises.
+                    // Drain the store oldest-first, removing each point only after it was
+                    // accepted for delivery. Buffered (offline/disconnected) points are simply
+                    // the oldest entries, so they "replay" first; live points follow as they
+                    // arrive — one path, in order.
+                    //
+                    // Two guards keep this from destroying the backlog:
+                    //   1. Wait for iOS to subscribe (CCCD write) before draining at all —
+                    //      until then, notify() returns Ok *without sending anything*, and a
+                    //      pop-on-Ok loop would silently drain the whole ring buffer into the
+                    //      void in the discovery window right after connect.
+                    //   2. Peek → notify → pop: the point stays buffered until the notify was
+                    //      accepted for a subscribed connection, so a disconnect mid-flight
+                    //      re-sends it on reconnect instead of losing it.
                     async {
                         log::info!("[BLE peripheral] Streaming...");
                         loop {
-                            let point = STORE.lock().await.pop_oldest();
+                            while !server.bike.stream.should_notify(&gatt_conn) {
+                                Timer::after(Duration::from_millis(100)).await;
+                            }
+                            let point = STORE.lock().await.peek_oldest();
                             let Some(p) = point else {
                                 DATA_READY.wait().await;
                                 continue;
                             };
-                            if server
-                                .notify(stack, stream_handle, &p.pack()[..])
-                                .await
-                                .is_err()
-                            {
-                                log::warn!("[BLE peripheral] notify error, re-buffering point");
-                                STORE.lock().await.requeue_front(p);
-                                return;
+                            match server.bike.stream.notify(&gatt_conn, &p.pack(), false).await {
+                                // Re-check the subscription: notify() also returns Ok when the
+                                // peer unsubscribed between the gate and the send (it no-ops).
+                                Ok(()) if server.bike.stream.should_notify(&gatt_conn) => {
+                                    STORE.lock().await.pop_oldest();
+                                }
+                                Ok(()) => {}
+                                Err(e) => {
+                                    log::warn!("[BLE peripheral] notify error: {:?}", e);
+                                    return;
+                                }
                             }
                         }
                     },
