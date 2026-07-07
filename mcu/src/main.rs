@@ -45,11 +45,29 @@ async fn imu_task(imu: imu::Imu) {
     imu.run().await;
 }
 
+#[embassy_executor::task]
+async fn watchdog_task(mut handle: embassy_nrf::wdt::WatchdogHandle) {
+    let mut ticker = embassy_time::Ticker::every(embassy_time::Duration::from_secs(1));
+    loop {
+        handle.pet();
+        ticker.next().await;
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config = embassy_nrf::config::Config::default();
     config.debug = embassy_nrf::config::Debug::NotConfigured;
     let p = embassy_nrf::init(config);
+
+    // Hardware watchdog, 8 s window, pet once a second from its own task. Without it a
+    // panic (panic-halt parks the whole thread-mode executor) or a wedged executor leaves
+    // an unattended logger dead but still draining the battery until a power cycle.
+    let mut wdt_config = embassy_nrf::wdt::Config::default();
+    wdt_config.timeout_ticks = 32768 * 8;
+    let Ok((_wdt, [wdt_handle])) = embassy_nrf::wdt::Watchdog::try_new(p.WDT, wdt_config) else {
+        panic!("wdt: already running with incompatible config");
+    };
 
     let (usb_runner, usb) = usb::init(p.USBD);
     let logger = logger::init(usb).expect("logger: failed to initialize");
@@ -65,6 +83,7 @@ async fn main(spawner: Spawner) {
     let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
     let imu = imu::init(p.TWISPI1, p.P0_07, p.P0_27, p.P1_08, p.P0_11);
 
+    spawner.spawn(watchdog_task(wdt_handle).expect("wdt: failed to spawn"));
     spawner.spawn(usb_task(usb_runner).expect("usb: failed to spawn"));
     spawner.spawn(logger_task(logger).expect("logger: failed to spawn"));
     spawner.spawn(gps_task(gps).expect("gps: failed to spawn"));
