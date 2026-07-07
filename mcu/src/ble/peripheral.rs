@@ -108,12 +108,14 @@ impl SensorState {
 static SENSOR_STATE: Mutex<CriticalSectionRawMutex, SensorState> = Mutex::new(SensorState::new());
 
 /// Latest MCU battery reading, without holding a Watch receiver slot — status snapshots are
-/// pulled on a ticker, so there's nothing to wake up on. The fallback only shows in the gap
-/// between boot and the first SAADC sample (sub-second), before iOS can plausibly connect;
-/// full-and-discharging is the do-nothing reading for the app.
+/// pulled on a ticker, so there's nothing to wake up on. The fallback covers the gap before
+/// the first SAADC sample and the no-battery-on-BAT-net case (Expansion Board dev setup) —
+/// the wire format has no "unknown", and full-and-discharging is the do-nothing reading for
+/// the app.
 fn mcu_battery() -> BatteryStatus {
     crate::battery::MCU_BATTERY
         .try_get()
+        .and_then(|r| r.status)
         .unwrap_or(BatteryStatus { percent: 100, state: BatteryState::Discharging })
 }
 

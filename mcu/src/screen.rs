@@ -1,7 +1,7 @@
 use display_interface::DisplayError;
 use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_nrf::{peripherals, twim, Peri};
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
@@ -12,9 +12,13 @@ use heapless::String;
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use static_cell::StaticCell;
 
-use voop_protocol::{BatteryState, BatteryStatus};
+use voop_protocol::BatteryState;
 
 use crate::gps::GpsState;
+
+// The panel stays lit this long past the last motion. A lit OLED is single-digit mA —
+// one of the biggest parked drains — while panel sleep is ~10 µA.
+const SCREEN_HOLD: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 enum InternalError {
@@ -40,7 +44,7 @@ type Display = Ssd1306<
 struct ScreenState {
     gps: Option<GpsState>,
     crank_revs: Option<u16>,
-    mcu_battery: Option<BatteryStatus>,
+    mcu_battery: Option<crate::battery::Reading>,
     sensor_connected: bool,
     sensor_battery: Option<u8>,
     ios_connected: bool,
@@ -85,16 +89,22 @@ fn render(display: &mut Display, state: &ScreenState) -> Result<(), InternalErro
         .draw(display)
         .map_err(|_| InternalError::RenderError)?;
 
-    // Line 2: MCU battery
-    let mut line: String<16> = String::new();
+    // Line 2: MCU battery, raw millivolts included for on-device calibration checks.
+    // "no bat" = the XIAO's own BAT net is empty (normal on the Expansion Board, whose
+    // JST battery feeds the 5 V rail and is invisible to the XIAO's divider).
+    let mut line: String<24> = String::new();
     match state.mcu_battery {
         None => write!(line, "MCU: ---"),
-        Some(b) => write!(
-            line,
-            "MCU: {}%{}",
-            b.percent,
-            if b.state == BatteryState::Charging { " CHG" } else { "" }
-        ),
+        Some(r) => match r.status {
+            None => write!(line, "MCU: {}mV no bat", r.millivolts),
+            Some(s) => write!(
+                line,
+                "MCU: {}mV {}%{}",
+                r.millivolts,
+                s.percent,
+                if s.state == BatteryState::Charging { " CHG" } else { "" }
+            ),
+        },
     }
     .map_err(|_| InternalError::RenderError)?;
     Text::with_baseline(&line, Point::new(0, 22), style, Baseline::Top)
@@ -235,6 +245,11 @@ impl Screen {
             log::warn!("[Screen] {}", e);
         }
 
+        // Panel power: lit while the bike is (recently) in motion or USB is attached (the
+        // dev bench). The boot value doubles as a grace window to read the boot status.
+        let mut display_on = true;
+        let mut last_motion = Instant::now();
+
         let mut ticker = Ticker::every(Duration::from_secs(1));
 
         loop {
@@ -247,8 +262,18 @@ impl Screen {
             .await
             {
                 Either4::First(Either::First(gps)) => state.gps = gps,
-                Either4::First(Either::Second(sample)) => state.crank_revs = Some(sample.revs),
-                Either4::Second(Either::First(connected)) => state.sensor_connected = connected,
+                // Cadence and sensor arrival double as motion for the panel-power hold:
+                // on a board with a dead IMU (they exist) the ride itself must light it.
+                Either4::First(Either::Second(sample)) => {
+                    state.crank_revs = Some(sample.revs);
+                    last_motion = Instant::now();
+                }
+                Either4::Second(Either::First(connected)) => {
+                    state.sensor_connected = connected;
+                    if connected {
+                        last_motion = Instant::now();
+                    }
+                }
                 Either4::Second(Either::Second(bat)) => state.sensor_battery = Some(bat),
                 Either4::Third(Either3::First(connected)) => state.ios_connected = connected,
                 Either4::Third(Either3::Second(moving)) => state.moving = Some(moving),
@@ -260,6 +285,24 @@ impl Screen {
                             Some(((seconds / 3600 % 24) as u8, (seconds / 60 % 60) as u8));
                     }
                 }
+            }
+
+            if state.moving == Some(true) {
+                last_motion = Instant::now();
+            }
+            let want_on = state.moving == Some(true)
+                || last_motion.elapsed() < SCREEN_HOLD
+                || state.mcu_battery.map(|r| r.vbus).unwrap_or(false);
+            if want_on != display_on {
+                display_on = want_on;
+                log::info!("[Screen] display {}", if display_on { "on" } else { "off" });
+                if let Err(e) = display.set_display_on(display_on) {
+                    log::warn!("[Screen] set_display_on failed: {:?}", e);
+                }
+            }
+            // Asleep: keep folding events into `state` (cheap), skip the I2C traffic.
+            if !display_on {
+                continue;
             }
 
             if let Err(e) = render(&mut display, &state) {

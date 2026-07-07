@@ -1,4 +1,5 @@
 use chrono::{Datelike as _, Timelike as _};
+use embassy_futures::select::{select, Either};
 use embassy_nrf::uarte::{self, Uarte};
 use embassy_nrf::{peripherals, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -15,6 +16,23 @@ pub static GPS: Watch<CriticalSectionRawMutex, Option<GpsState>, 2> = Watch::new
 
 // If no NMEA arrives for this long, consider the GPS silent and report loss of fix.
 const GPS_SILENCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+// After this many consecutive silent windows while awake, assume the module is stuck
+// (most likely: standby didn't release on UART traffic) and hot-restart it.
+const SILENT_WINDOWS_BEFORE_RESTART: u32 = 3;
+
+// Air530 power commands (cross-checked against the vendor-datasheet translations in the
+// Meshtastic Air530 driver and the LilyGO T-Watch library):
+//   - "$PGKC051,0" enters standby: ~0.85 mA vs ~37-43 mA tracking/acquiring. RAM stays
+//     powered, so the next fix is a hot start (seconds).
+//   - Deeper modes ("$PGKC105,4", ~31 µA) need the WAKE pin, which the Grove cable
+//     doesn't carry — UART is all we have. True power-off needs a FET in Grove VCC.
+//   - The references disagree on whether UART traffic wakes it from PGKC051 standby
+//     (LilyGO only ever uses the WAKE pin), so the wake path sends bytes and, if the
+//     module stays silent, the watchdog escalates to a hot restart ("$PGKC030,1,1") —
+//     that restores full operation with ephemeris intact. Verify on hardware.
+const STANDBY_CMD: &[u8] = b"$PGKC051,0*37\r\n";
+const HOT_RESTART_CMD: &[u8] = b"$PGKC030,1,1*2C\r\n";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum FixQuality {
@@ -47,23 +65,78 @@ impl Gps {
         let mut config = uarte::Config::default();
         config.baudrate = uarte::Baudrate::BAUD9600;
         let uarte = Uarte::new(self.uarte0, self.rxd, self.txd, crate::Irqs, config);
-        let (_tx, mut rx) = uarte.split_with_idle(self.timer1, self.ppi_ch0, self.ppi_ch1);
+        let (mut tx, mut rx) = uarte.split_with_idle(self.timer1, self.ppi_ch0, self.ppi_ch1);
+
+        let Some(mut gate) = crate::power::GPS_ENABLED.receiver() else {
+            log::error!("[GPS] GPS_ENABLED: no free receiver slot");
+            return;
+        };
 
         let gps_tx = GPS.sender();
         let mut had_fix = false;
+        let mut silent_windows = 0u32;
 
         let mut buf = [0u8; 1024];
         loop {
-            match with_timeout(GPS_SILENCE_TIMEOUT, rx.read_until_idle(&mut buf)).await {
+            // Gate closed → standby. The module powers up acquiring at boot, so a parked
+            // boot goes straight to sleep here too.
+            if !gate.get().await {
+                gps_tx.send(None);
+                had_fix = false;
+                if let Err(e) = tx.write(STANDBY_CMD).await {
+                    log::warn!("[GPS] standby write error: {:?}", e);
+                }
+                log::info!("[GPS] standby");
+                loop {
+                    if gate.get().await {
+                        break;
+                    }
+                    gate.changed().await;
+                }
+                // Any UART traffic should release PGKC051 standby; if it doesn't, the
+                // silence watchdog below hot-restarts the module.
+                if let Err(e) = tx.write(b"\r\n").await {
+                    log::warn!("[GPS] wake write error: {:?}", e);
+                }
+                silent_windows = 0;
+                log::info!("[GPS] wake");
+            }
+
+            let gate_closed = async {
+                loop {
+                    if !gate.get().await {
+                        break;
+                    }
+                    gate.changed().await;
+                }
+            };
+            match select(
+                gate_closed,
+                with_timeout(GPS_SILENCE_TIMEOUT, rx.read_until_idle(&mut buf)),
+            )
+            .await
+            {
+                // Power policy pulled the plug — loop back around into standby. A read
+                // cancelled mid-sentence is fine: the parser resyncs on the next newline.
+                Either::First(()) => continue,
                 // No NMEA for the whole window — the GPS has gone silent. Report loss of fix
-                // so consumers stop stamping the last known position.
-                Err(_) => {
+                // so consumers stop stamping the last known position; if it stays silent,
+                // assume a wedged module (standby that ignored the wake bytes) and restart.
+                Either::Second(Err(_)) => {
                     if had_fix {
                         gps_tx.send(None);
                         had_fix = false;
                     }
+                    silent_windows += 1;
+                    if silent_windows.is_multiple_of(SILENT_WINDOWS_BEFORE_RESTART) {
+                        log::warn!("[GPS] silent {}s, hot-restarting", silent_windows * 5);
+                        if let Err(e) = tx.write(HOT_RESTART_CMD).await {
+                            log::warn!("[GPS] restart write error: {:?}", e);
+                        }
+                    }
                 }
-                Ok(Ok(n)) => {
+                Either::Second(Ok(Ok(n))) => {
+                    silent_windows = 0;
                     for line in buf[..n].split(|&b| b == b'\n') {
                         if line.is_empty() {
                             continue;
@@ -123,7 +196,7 @@ impl Gps {
                         }
                     }
                 }
-                Ok(Err(e)) => log::debug!("[GPS] read error: {:?}", e),
+                Either::Second(Ok(Err(e))) => log::debug!("[GPS] read error: {:?}", e),
             }
         }
     }

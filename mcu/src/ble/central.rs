@@ -46,12 +46,12 @@ pub struct CrankSample {
 }
 
 // Crank readings — sent only when the rev count changes (bike moving).
-// 2 receivers: peripheral DataPoint loop + screen.
-pub static CRANK_REVS: Watch<CriticalSectionRawMutex, CrankSample, 2> = Watch::new();
+// 3 receivers: peripheral DataPoint loop + screen + power policy.
+pub static CRANK_REVS: Watch<CriticalSectionRawMutex, CrankSample, 3> = Watch::new();
 
 // Whether the cadence sensor is connected.
-// 2 receivers: peripheral DataPoint loop + screen.
-pub static SENSOR_CONNECTED: Watch<CriticalSectionRawMutex, bool, 2> = Watch::new();
+// 3 receivers: peripheral DataPoint loop + screen + power policy.
+pub static SENSOR_CONNECTED: Watch<CriticalSectionRawMutex, bool, 3> = Watch::new();
 
 // Last known sensor battery %.
 // 2 receivers: peripheral DataPoint loop + screen.
@@ -96,6 +96,11 @@ impl EventHandler for CscEventHandler {
 }
 
 pub async fn run(stack: &Stack<'_, MyController, DefaultPacketPool>) {
+    let Some(mut scan_gate) = crate::power::SCAN_ENABLED.receiver() else {
+        log::error!("[BLE central] SCAN_ENABLED: no free receiver slot");
+        return;
+    };
+
     // Back off before every reconnect attempt (after the first) so a sensor that connects but
     // fails service discovery — or any error path that `continue`s — doesn't spin in a tight
     // scan→connect→fail loop. The first iteration scans immediately.
@@ -108,6 +113,17 @@ pub async fn run(stack: &Stack<'_, MyController, DefaultPacketPool>) {
 
         SENSOR_CONNECTED.sender().send(false);
         SENSOR_ADDR.reset();
+
+        // Parked: the sensor sleeps when still and only advertises on movement, so
+        // scanning would duty-cycle the radio to find nobody. Wait for the power policy
+        // to see motion. Established connections are unaffected — when the sensor goes
+        // to sleep it drops the link itself, which lands back here.
+        loop {
+            if scan_gate.get().await {
+                break;
+            }
+            scan_gate.changed().await;
+        }
 
         log::info!("[BLE central] Scanning for CSC sensor...");
         let central = stack.central();
@@ -127,7 +143,25 @@ pub async fn run(stack: &Stack<'_, MyController, DefaultPacketPool>) {
             }
         };
 
-        let addr = SENSOR_ADDR.wait().await;
+        // A scan session with no sensor in sight must still honor the gate closing (the
+        // bike was nudged, nobody rode off) — otherwise the radio scans until the next
+        // motion event whenever a report never arrives.
+        let addr = match select(SENSOR_ADDR.wait(), async {
+            loop {
+                if !scan_gate.get().await {
+                    break;
+                }
+                scan_gate.changed().await;
+            }
+        })
+        .await
+        {
+            Either::First(addr) => addr,
+            Either::Second(()) => {
+                log::info!("[BLE central] Motion stopped, pausing scan");
+                continue;
+            }
+        };
         drop(session);
         embassy_futures::yield_now().await;
 
