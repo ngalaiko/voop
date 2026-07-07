@@ -13,6 +13,9 @@ final class BLEManager: NSObject {
     private var central: CBCentralManager?
     private var peripheral: MCUPeripheral?
     private var connectingPeripheral: CBPeripheral?
+    /// Peripheral handed back by state restoration before the manager is powered on; resumed
+    /// (rediscover or reconnect) once `centralManagerDidUpdateState` reports `.poweredOn`.
+    private var restoredPeripheral: CBPeripheral?
 
     private var dataPointContinuation: AsyncStream<DataPoint>.Continuation?
     private(set) var dataPoints: AsyncStream<DataPoint>
@@ -52,6 +55,22 @@ final class BLEManager: NSObject {
         connectionState = .idle
     }
 
+    /// Wraps a CoreBluetooth peripheral in an `MCUPeripheral` and wires its callbacks. Used on
+    /// fresh connects and on state restoration — the restored peripheral must get its delegate
+    /// back immediately, or notifications delivered to a relaunched app go nowhere.
+    private func attach(_ cbPeripheral: CBPeripheral) -> MCUPeripheral {
+        let mcu = MCUPeripheral(peripheral: cbPeripheral)
+        mcu.onDataPoint = { [weak self] point in
+            self?.dataPointContinuation?.yield(point)
+        }
+        mcu.onStatusUpdate = { [weak self] status in
+            self?.deviceStatus = status
+        }
+        peripheral = mcu
+        cbPeripheral.delegate = mcu
+        return mcu
+    }
+
     #if DEBUG
         /// Forces a connected state with a sample battery report, for simulator visual checks.
         func applyDemoStatus() {
@@ -73,16 +92,47 @@ extension BLEManager: CBCentralManagerDelegate {
               let p = peripherals.first
         else { return }
         MainActor.assumeIsolated {
-            connectingPeripheral = p
-            self.central?.connect(p, options: nil)
+            // The manager is still `.unknown` here — a connect() now would be dropped as API
+            // misuse, never queued. Reattach the delegate immediately (the app may have been
+            // relaunched *because* this peripheral sent a notification; without a delegate,
+            // iOS's stack acks data the app never sees while the MCU drains its buffer) and
+            // defer connect/rediscover to the poweredOn transition.
+            restoredPeripheral = p
+            _ = attach(p)
             connectionState = .connecting
         }
     }
 
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
-            if central.state == .poweredOn {
-                startScan()
+            switch central.state {
+            case .poweredOn:
+                if let p = restoredPeripheral {
+                    restoredPeripheral = nil
+                    if p.state == .connected {
+                        // Still connected at the system level (background relaunch). A
+                        // connected peripheral doesn't advertise, so scanning would never
+                        // find it — rediscover services and re-arm notifications instead.
+                        connectionState = .connected
+                        peripheral?.discoverServices()
+                    } else {
+                        connectingPeripheral = p
+                        connectionState = .connecting
+                        central.connect(p, options: nil)
+                    }
+                } else {
+                    startScan()
+                }
+            case .poweredOff, .unauthorized, .unsupported:
+                // Radio gone: drop the session so the UI doesn't keep claiming "Connected"
+                // with a stale status. CoreBluetooth invalidates the peripherals anyway.
+                peripheral = nil
+                connectingPeripheral = nil
+                restoredPeripheral = nil
+                deviceStatus = nil
+                connectionState = .disconnected(nil)
+            default:
+                break
             }
         }
     }
@@ -104,15 +154,7 @@ extension BLEManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         MainActor.assumeIsolated {
             connectingPeripheral = nil
-            let mcu = MCUPeripheral(peripheral: peripheral)
-            mcu.onDataPoint = { [weak self] point in
-                self?.dataPointContinuation?.yield(point)
-            }
-            mcu.onStatusUpdate = { [weak self] status in
-                self?.deviceStatus = status
-            }
-            self.peripheral = mcu
-            peripheral.delegate = mcu
+            let mcu = attach(peripheral)
             mcu.discoverServices()
             connectionState = .connected
         }
