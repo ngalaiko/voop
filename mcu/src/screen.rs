@@ -1,7 +1,7 @@
 use display_interface::DisplayError;
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_nrf::{peripherals, twim, Peri};
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Ticker, Timer};
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
@@ -163,9 +163,13 @@ impl Screen {
         let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
             .into_buffered_graphics_mode();
 
-        if let Err(e) = display.init().map_err(InternalError::InitError) {
-            log::error!("[Screen] {}", e);
-            return;
+        // Retry init: a transient I2C hiccup at boot (or a display that powers up slowly)
+        // shouldn't leave the screen dead for the whole uptime.
+        let mut attempt = 0u32;
+        while let Err(e) = display.init().map_err(InternalError::InitError) {
+            attempt += 1;
+            log::error!("[Screen] {} (attempt {}), retrying", e, attempt);
+            Timer::after(Duration::from_secs(5)).await;
         }
         display.clear(BinaryColor::Off).ok();
         display.flush().ok();
