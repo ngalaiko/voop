@@ -1,5 +1,5 @@
 use display_interface::DisplayError;
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select3, select4, Either, Either3, Either4};
 use embassy_nrf::{peripherals, twim, Peri};
 use embassy_time::{Duration, Ticker, Timer};
 use embedded_graphics::{
@@ -11,6 +11,8 @@ use embedded_graphics::{
 use heapless::String;
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use static_cell::StaticCell;
+
+use voop_protocol::{BatteryState, BatteryStatus};
 
 use crate::gps::GpsState;
 
@@ -38,6 +40,7 @@ type Display = Ssd1306<
 struct ScreenState {
     gps: Option<GpsState>,
     crank_revs: Option<u16>,
+    mcu_battery: Option<BatteryStatus>,
     sensor_connected: bool,
     sensor_battery: Option<u8>,
     ios_connected: bool,
@@ -82,9 +85,18 @@ fn render(display: &mut Display, state: &ScreenState) -> Result<(), InternalErro
         .draw(display)
         .map_err(|_| InternalError::RenderError)?;
 
-    // Line 2: MCU battery (hardcoded until we have real measurement)
+    // Line 2: MCU battery
     let mut line: String<16> = String::new();
-    write!(line, "MCU: 100% CHG").map_err(|_| InternalError::RenderError)?;
+    match state.mcu_battery {
+        None => write!(line, "MCU: ---"),
+        Some(b) => write!(
+            line,
+            "MCU: {}%{}",
+            b.percent,
+            if b.state == BatteryState::Charging { " CHG" } else { "" }
+        ),
+    }
+    .map_err(|_| InternalError::RenderError)?;
     Text::with_baseline(&line, Point::new(0, 22), style, Baseline::Top)
         .draw(display)
         .map_err(|_| InternalError::RenderError)?;
@@ -198,10 +210,15 @@ impl Screen {
             log::error!("[Screen] MOVING: no free receiver slot");
             return;
         };
+        let Some(mut mcu_bat_rx) = crate::battery::MCU_BATTERY.receiver() else {
+            log::error!("[Screen] MCU_BATTERY: no free receiver slot");
+            return;
+        };
 
         let mut state = ScreenState {
             gps: None,
             crank_revs: None,
+            mcu_battery: None,
             sensor_connected: false,
             sensor_battery: None,
             ios_connected: false,
@@ -224,7 +241,7 @@ impl Screen {
             match select4(
                 select(gps_rx.changed(), crank_rx.changed()),
                 select(sensor_conn_rx.changed(), sensor_bat_rx.changed()),
-                select(ios_rx.changed(), moving_rx.changed()),
+                select3(ios_rx.changed(), moving_rx.changed(), mcu_bat_rx.changed()),
                 ticker.next(),
             )
             .await
@@ -233,8 +250,9 @@ impl Screen {
                 Either4::First(Either::Second(sample)) => state.crank_revs = Some(sample.revs),
                 Either4::Second(Either::First(connected)) => state.sensor_connected = connected,
                 Either4::Second(Either::Second(bat)) => state.sensor_battery = Some(bat),
-                Either4::Third(Either::First(connected)) => state.ios_connected = connected,
-                Either4::Third(Either::Second(moving)) => state.moving = Some(moving),
+                Either4::Third(Either3::First(connected)) => state.ios_connected = connected,
+                Either4::Third(Either3::Second(moving)) => state.moving = Some(moving),
+                Either4::Third(Either3::Third(bat)) => state.mcu_battery = Some(bat),
                 Either4::Fourth(()) => {
                     if let Some(millis) = crate::clock::now().await.unix_millis {
                         let seconds = millis / 1000;

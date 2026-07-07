@@ -107,6 +107,16 @@ impl SensorState {
 
 static SENSOR_STATE: Mutex<CriticalSectionRawMutex, SensorState> = Mutex::new(SensorState::new());
 
+/// Latest MCU battery reading, without holding a Watch receiver slot — status snapshots are
+/// pulled on a ticker, so there's nothing to wake up on. The fallback only shows in the gap
+/// between boot and the first SAADC sample (sub-second), before iOS can plausibly connect;
+/// full-and-discharging is the do-nothing reading for the app.
+fn mcu_battery() -> BatteryStatus {
+    crate::battery::MCU_BATTERY
+        .try_get()
+        .unwrap_or(BatteryStatus { percent: 100, state: BatteryState::Discharging })
+}
+
 pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
     static SERVER: StaticCell<BikeServer<'static>> = StaticCell::new();
     let server = SERVER.init(
@@ -226,7 +236,7 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                 let status = {
                     let ss = SENSOR_STATE.lock().await;
                     DeviceStatus {
-                        mcu_battery: BatteryStatus { percent: 100, state: BatteryState::Charging },
+                        mcu_battery: mcu_battery(),
                         sensor_connected: ss.connected,
                         sensor_battery: ss.battery,
                     }
@@ -284,10 +294,7 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                                     let status = {
                                         let ss = SENSOR_STATE.lock().await;
                                         DeviceStatus {
-                                            mcu_battery: BatteryStatus {
-                                                percent: 100,
-                                                state: BatteryState::Charging,
-                                            },
+                                            mcu_battery: mcu_battery(),
                                             sensor_connected: ss.connected,
                                             sensor_battery: ss.battery,
                                         }

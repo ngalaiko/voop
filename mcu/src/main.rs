@@ -7,6 +7,7 @@ use panic_halt as _;
 mod irqs;
 pub use irqs::Irqs;
 
+pub mod battery;
 pub mod ble;
 pub mod clock;
 pub mod gps;
@@ -43,6 +44,11 @@ async fn screen_task(screen: screen::Screen) {
 #[embassy_executor::task]
 async fn imu_task(imu: imu::Imu) {
     imu.run().await;
+}
+
+#[embassy_executor::task]
+async fn battery_task(battery: battery::Battery) {
+    battery.run().await;
 }
 
 #[embassy_executor::task]
@@ -88,6 +94,7 @@ async fn main(spawner: Spawner) {
     ble.request_hfclk_forever().expect("hfclk: failed to request");
     let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
     let imu = imu::init(p.TWISPI1, p.P0_07, p.P0_27, p.P1_08, p.P0_11);
+    let battery = battery::init(p.SAADC, p.P0_31, p.P0_14, p.P0_17);
 
     spawner.spawn(watchdog_task(wdt_handle).expect("wdt: failed to spawn"));
     spawner.spawn(usb_task(usb_runner).expect("usb: failed to spawn"));
@@ -96,4 +103,5 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ble_task(ble).expect("ble: failed to spawn"));
     spawner.spawn(screen_task(screen).expect("screen: failed to spawn"));
     spawner.spawn(imu_task(imu).expect("imu: failed to spawn"));
+    spawner.spawn(battery_task(battery).expect("battery: failed to spawn"));
 }
