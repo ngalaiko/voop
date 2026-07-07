@@ -5,7 +5,7 @@ import WidgetKit
 struct RideLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: RideActivityAttributes.self) { context in
-            RideLockScreenView(state: context.state)
+            RideLockScreenView(state: context.state, isStale: context.isStale)
                 .padding()
                 .activityBackgroundTint(Color.black.opacity(0.45))
                 .activitySystemActionForegroundColor(.white)
@@ -13,7 +13,7 @@ struct RideLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Label {
-                        Text(context.state.isFinished ? "Ride ended" : "Riding")
+                        Text(context.state.isFinished || context.isStale ? "Ride ended" : "Riding")
                     } icon: {
                         Image(systemName: "bicycle")
                     }
@@ -21,7 +21,7 @@ struct RideLiveActivity: Widget {
                     .foregroundStyle(.red)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    RideTimerText(state: context.state)
+                    RideTimerText(state: context.state, isStale: context.isStale)
                         .font(.title3.monospacedDigit())
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
@@ -52,17 +52,18 @@ struct RideLiveActivity: Widget {
 
 private struct RideLockScreenView: View {
     let state: RideActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "bicycle")
                     .foregroundStyle(.red)
-                Text(state.isFinished ? "Ride ended" : "Riding")
+                Text(state.isFinished || isStale ? "Ride ended" : "Riding")
                     .fontWeight(.semibold)
                     .foregroundStyle(.red)
                 Spacer()
-                RideTimerText(state: state)
+                RideTimerText(state: state, isStale: isStale)
                     .font(.title3.monospacedDigit())
             }
             HStack(spacing: 16) {
@@ -76,13 +77,26 @@ private struct RideLockScreenView: View {
 }
 
 /// Self-counting elapsed clock. The frozen interval (start...end) makes it stop at the true
-/// duration once the ride has ended.
+/// duration once the ride has ended. A *stale* activity (the app was killed before it could
+/// end it — `staleDate` passed with no update) freezes at the last data point instead of
+/// counting up for hours; `staleDate` alone only flips `isStale`, it never stops the timer.
 private struct RideTimerText: View {
     let state: RideActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
-        Text(timerInterval: state.elapsedInterval, countsDown: false)
-            .multilineTextAlignment(.trailing)
+        if isStale, !state.isFinished {
+            Text(frozenDuration)
+                .multilineTextAlignment(.trailing)
+        } else {
+            Text(timerInterval: state.elapsedInterval, countsDown: false)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var frozenDuration: String {
+        let seconds = max(0, state.lastPointDate.timeIntervalSince(state.elapsedInterval.lowerBound))
+        return Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2)))
     }
 }
 

@@ -156,6 +156,7 @@ final class AppModel {
             currentSpeedKph: speedKph,
             currentCadenceRpm: rpm,
             elapsedInterval: ride.startDate ... .distantFuture,
+            lastPointDate: ride.endDate,
             isFinished: false
         )
         // Stale once the ride would no longer count as ongoing (last point + stop-pause gap), so

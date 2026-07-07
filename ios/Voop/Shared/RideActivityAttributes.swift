@@ -16,6 +16,10 @@ struct RideActivityAttributes: ActivityAttributes {
         /// Drives `Text(timerInterval:)`. While live the upper bound is far in the future so
         /// the clock counts up smoothly on-device; on end it collapses to the true duration.
         var elapsedInterval: ClosedRange<Date>
+        /// The ride's last data point as of this update. When the activity goes stale (app
+        /// killed before it could end it), the widget freezes the timer at this moment instead
+        /// of counting up forever; `end()` uses it to freeze adopted activities correctly.
+        var lastPointDate: Date
         var isFinished: Bool
     }
 }
