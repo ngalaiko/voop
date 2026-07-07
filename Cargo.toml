@@ -1,6 +1,10 @@
 [workspace]
 members = ["mcu", "protocol", "protocol-ffi"]
-default-members = ["mcu"]
+# Host-buildable crates only: the firmware needs the thumbv7em target config that
+# mcu/.cargo/config.toml applies (build it from mcu/, e.g. `mise run build`) — with
+# `default-members = ["mcu"]` a plain `cargo check`/`cargo test` at the root died in
+# nrf-sdc-sys trying to build the SoftDevice for macOS.
+default-members = ["protocol", "protocol-ffi"]
 resolver = "2"
 
 [profile.release]
