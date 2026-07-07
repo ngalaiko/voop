@@ -44,10 +44,15 @@ pub static IOS_CONNECTED: Watch<CriticalSectionRawMutex, bool, 1> = Watch::new()
 // Ring buffer of DataPoints — the single source of truth for everything captured. The
 // delivery loop drains it oldest-first and removes each point only once iOS has acked it,
 // so buffered (offline/disconnected) points and live points flow through one path, in order.
+//
+// Points are stored pre-packed (25 wire bytes) rather than as in-RAM `DataPoint` (40 bytes
+// with Option padding): at 4096 slots that's 100 KiB of statics instead of 160 KiB — real
+// headroom on a 237 KiB part where the stack is whatever the statics leave over.
 const CAPACITY: usize = 4096;
+const PACKED_LEN: usize = 25;
 
 struct Store {
-    buf: Deque<DataPoint, CAPACITY>,
+    buf: Deque<[u8; PACKED_LEN], CAPACITY>,
 }
 
 impl Store {
@@ -55,19 +60,19 @@ impl Store {
         Self { buf: Deque::new() }
     }
 
-    /// Append a point and wake the delivery loop. Drops the oldest point when full so the
-    /// buffer always retains the most recent CAPACITY points (a disconnection safety net).
-    fn push(&mut self, point: DataPoint) {
+    /// Append a packed point and wake the delivery loop. Drops the oldest point when full so
+    /// the buffer always retains the most recent CAPACITY points (a disconnection safety net).
+    fn push(&mut self, packed: [u8; PACKED_LEN]) {
         if self.buf.is_full() {
             self.buf.pop_front();
         }
-        let _ = self.buf.push_back(point);
+        let _ = self.buf.push_back(packed);
         DATA_READY.signal(());
     }
 
     /// The oldest buffered point, without removing it. Delivery is FIFO so iOS receives a
     /// monotonic `uptime_ms` timeline.
-    fn peek_oldest(&self) -> Option<DataPoint> {
+    fn peek_oldest(&self) -> Option<[u8; PACKED_LEN]> {
         self.buf.front().copied()
     }
 
@@ -152,7 +157,7 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                             lat_microdeg: current_lat,
                             lon_microdeg: current_lon,
                         };
-                        STORE.lock().await.push(point);
+                        STORE.lock().await.push(point.pack());
                     }
                     // GPS owns all fix-state logic; we just stamp whatever it last reported
                     // (a position, or None on lost fix / silence).
@@ -320,7 +325,7 @@ pub async fn run(stack: &Stack<'_, super::MyController, DefaultPacketPool>) {
                                 DATA_READY.wait().await;
                                 continue;
                             };
-                            match server.bike.stream.notify(&gatt_conn, &p.pack(), false).await {
+                            match server.bike.stream.notify(&gatt_conn, &p, false).await {
                                 // Re-check the subscription: notify() also returns Ok when the
                                 // peer unsubscribed between the gate and the send (it no-ops).
                                 Ok(()) if server.bike.stream.should_notify(&gatt_conn) => {
