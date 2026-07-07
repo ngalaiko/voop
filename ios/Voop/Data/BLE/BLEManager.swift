@@ -9,6 +9,9 @@ private nonisolated(unsafe) let mcuServiceUUID = CBUUID(string: serviceUuid())
 final class BLEManager: NSObject {
     private(set) var connectionState: ConnectionState = .idle
     private(set) var deviceStatus: DeviceStatus?
+    /// True when the connected firmware speaks a different protocol revision than this app —
+    /// its data can't be decoded (and is being lost), so the UI should say so.
+    private(set) var protocolMismatch = false
 
     private var central: CBCentralManager?
     private var peripheral: MCUPeripheral?
@@ -84,6 +87,10 @@ final class BLEManager: NSObject {
         mcu.onStatusUpdate = { [weak self] status in
             self?.deviceStatus = status
         }
+        mcu.onProtocolMismatch = { [weak self] in
+            self?.protocolMismatch = true
+        }
+        protocolMismatch = false
         peripheral = mcu
         cbPeripheral.delegate = mcu
         return mcu

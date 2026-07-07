@@ -99,6 +99,10 @@ struct MainView: View {
 
     private var deviceValue: Text {
         switch appModel.ble.connectionState {
+        case .connected where appModel.ble.protocolMismatch:
+            // The firmware speaks a different protocol revision: it looks connected but every
+            // point it sends is being dropped (and popped from its buffer). Say so.
+            Text("Update needed").foregroundStyle(.red)
         case .connected:
             connectedValue(percent: appModel.ble.deviceStatus.map { Int($0.mcuBattery.percent) })
         case .scanning, .connecting:

@@ -12,6 +12,9 @@ private nonisolated(unsafe) let timeSyncCharUUID = CBUUID(string: timeSyncCharUu
 final class MCUPeripheral: NSObject, CBPeripheralDelegate, @unchecked Sendable {
     var onDataPoint: (@MainActor (DataPoint) -> Void)?
     var onStatusUpdate: (@MainActor (DeviceStatus) -> Void)?
+    /// Fired when a notification fails the version-checked decode: the firmware speaks a
+    /// different protocol revision than this app.
+    var onProtocolMismatch: (@MainActor () -> Void)?
 
     private let peripheral: CBPeripheral
 
@@ -77,10 +80,22 @@ final class MCUPeripheral: NSObject, CBPeripheralDelegate, @unchecked Sendable {
         case streamCharUUID:
             if let point = unpackDataPoint(bytes: data) {
                 MainActor.assumeIsolated { onDataPoint?(point) }
+            } else {
+                // Version-checked decode failed. Silently dropping these reads as "connected
+                // but no data" — worse, the MCU pops each point once it's delivered, so a
+                // mismatched app quietly *erases* the ride from the device. Make it loud.
+                let versions = "firmware byte0: \(data.first ?? 0), app expects v\(protocolVersion())"
+                log.error("dropping data point: protocol mismatch (\(data.count) bytes, \(versions))")
+                MainActor.assumeIsolated { onProtocolMismatch?() }
             }
         case statusCharUUID:
             if let status = unpackDeviceStatus(bytes: data) {
                 MainActor.assumeIsolated { onStatusUpdate?(status) }
+            } else if !data.allSatisfy({ $0 == 0 }) {
+                // All-zero is the characteristic's placeholder value before the MCU writes the
+                // first real snapshot — not a mismatch.
+                log.error("dropping device status: protocol mismatch (app expects v\(protocolVersion()))")
+                MainActor.assumeIsolated { onProtocolMismatch?() }
             }
         default:
             break
