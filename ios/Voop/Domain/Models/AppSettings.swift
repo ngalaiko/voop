@@ -90,8 +90,12 @@ final class AppSettings {
         cogTeeth = cog > 0 ? cog : 16
         let m = UserDefaults.standard.integer(forKey: "minCadenceRpm")
         minCadenceRpm = m > 0 ? m : 20
-        let d = UserDefaults.standard.integer(forKey: "minDistanceMeters")
-        minDistanceMeters = d > 0 ? d : 500
+        // 0 ("record everything") is a legal stored value here — the Stepper allows it — so
+        // "unset" must be detected via object(forKey:), not the 0 that integer(forKey:)
+        // returns for both. The other settings' ranges exclude their sentinel.
+        minDistanceMeters = UserDefaults.standard.object(forKey: "minDistanceMeters") == nil
+            ? 500
+            : UserDefaults.standard.integer(forKey: "minDistanceMeters")
         let gap = UserDefaults.standard.integer(forKey: "gapThresholdSeconds")
         gapThresholdSeconds = gap > 0 ? gap : 5 * 60
     }
