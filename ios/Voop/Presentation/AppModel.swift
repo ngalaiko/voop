@@ -38,6 +38,11 @@ final class AppModel {
     /// replay) collapses into one re-derive instead of a full O(n log n) pass per point.
     private var redetectPending = false
 
+    /// App-lifetime pipeline tasks. Deliberately retained (and retaining self) for the life of
+    /// the process — see `init`.
+    private var ingestTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
+
     init() {
         ble = BLEManager()
         health = HealthKitService()
@@ -47,6 +52,12 @@ final class AppModel {
         // Adopt any activity left running from a prior session *before* the first point can
         // arrive and drive `reconcileActivity`, so we never orphan it and start a duplicate.
         activityController.adoptExisting()
+        // Ingestion must live as long as the process, not a view: hung off a SwiftUI `.task`,
+        // a background BLE relaunch (scene never connects) would leave the stream unconsumed —
+        // nothing persisted — and a scene teardown would cancel the `for await`, *finishing*
+        // the single-shot AsyncStream so every later point is silently dropped.
+        ingestTask = Task { await self.startReceiving() }
+        heartbeatTask = Task { await self.runActivityHeartbeat() }
     }
 
     func markDevicePaired() {
@@ -71,7 +82,7 @@ final class AppModel {
         }
     #endif
 
-    func startReceiving() async {
+    private func startReceiving() async {
         for await point in ble.dataPoints {
             do {
                 // Every point is a crank event, so it always carries a rev count.
@@ -160,7 +171,9 @@ final class AppModel {
 
     /// Wall-clock loop that keeps the Live Activity honest. The data stream can't detect a ride
     /// *ending* (points stop arriving when the rider stops), so this periodic tick is what ends it.
-    func runActivityHeartbeat() async {
+    /// No teardown work after the loop: cancellation means the process is dying, not the ride —
+    /// ending the activity here would kill the one surface meant to outlive the app.
+    private func runActivityHeartbeat() async {
         while !Task.isCancelled {
             // Also acts as the batch-save heartbeat, so pending points are durable within a few
             // seconds even on a slow trickle that never reaches `saveBatchSize`.
@@ -168,8 +181,6 @@ final class AppModel {
             await reconcileActivity()
             try? await Task.sleep(for: .seconds(3))
         }
-        flush()
-        await activityController.end()
     }
 
     /// Every stored raw point as CSV, including the absolute date used for detection.
