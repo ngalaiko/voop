@@ -28,12 +28,20 @@ impl LoggerRunner {
     pub async fn run(mut self) {
         loop {
             self.usb.wait_connection().await;
-            loop {
+            'connected: loop {
                 let msg = LOG_CHANNEL.receive().await;
                 for chunk in msg.as_bytes().chunks(64) {
                     if self.usb.write_packet(chunk).await.is_err() {
-                        break;
+                        // Port gone — wait for the next connection instead of consuming
+                        // (and discarding) messages into a dead endpoint.
+                        break 'connected;
                     }
+                }
+                // A message that is an exact multiple of the 64-byte packet size ends on a
+                // full packet; follow with a zero-length packet so host CDC stacks flush it
+                // instead of buffering until the next log line.
+                if !msg.is_empty() && msg.len() % 64 == 0 {
+                    let _ = self.usb.write_packet(&[]).await;
                 }
             }
         }
