@@ -126,6 +126,14 @@ async fn sample_mv(adc: &mut Saadc<'_, 1>) -> u16 {
     ((raw * 3600 * (DIVIDER_TOP_KOHM + DIVIDER_BOTTOM_KOHM)) / (DIVIDER_BOTTOM_KOHM * 4096)) as u16
 }
 
+/// Median of three tick readings — a single-tick outlier can never move it. Field logs
+/// showed lone ~400 mV excursions walking straight into the percent: charger/load
+/// transients outlast `sample_mv`'s ~200 µs averaging window, so all four conversions
+/// agree on the lie and only cross-tick filtering catches it.
+fn median3(a: u16, b: u16, c: u16) -> u16 {
+    a.min(b).max(a.max(b).min(c))
+}
+
 impl Battery {
     pub async fn run(self) {
         // Divider sink on for the whole uptime (see the P0.31 overvoltage note above).
@@ -151,6 +159,11 @@ impl Battery {
             }
         }
 
+        // Ring of the last 3 tick readings, seeded with the settled boot value; percent
+        // and battery presence derive from its median (see median3).
+        let mut recent = [vbat_mv; 3];
+        let mut idx = 0;
+
         let sender = MCU_BATTERY.sender();
         let mut last: Option<Reading> = None;
         // 2 s cadence does double duty: VBUS plug/unplug shows up promptly, and the percent
@@ -163,14 +176,17 @@ impl Battery {
             let vbus = vbus_present();
             let state = if vbus { BatteryState::Charging } else { BatteryState::Discharging };
 
-            // Percent steps sit only ~3 mV apart in the flat middle of the discharge curve,
-            // where ADC noise would flap a plain threshold: hold the published percent until
-            // it moves by 2 points (or the charge state flips). The raw millivolts are
-            // published undamped — they're the debugging/calibration readout.
-            let status = (vbat_mv >= BATTERY_PRESENT_MV).then(|| {
-                let candidate = percent_from_mv(vbat_mv);
+            // Two damping layers, both tuned against field logs. The 3-tick median absorbs
+            // lone transient ticks; but adjacent readings still straddle percent boundaries
+            // (steps sit only ~3 mV apart in the flat middle of the curve), so the published
+            // percent additionally holds until the candidate moves by MORE than 2 points —
+            // an observed 31↔33 flap straddles exactly 2 — or the charge state flips. The
+            // raw millivolts are published undamped — they're the calibration readout.
+            let median = median3(recent[0], recent[1], recent[2]);
+            let status = (median >= BATTERY_PRESENT_MV).then(|| {
+                let candidate = percent_from_mv(median);
                 let percent = match last.and_then(|l| l.status) {
-                    Some(l) if l.state == state && l.percent.abs_diff(candidate) < 2 => {
+                    Some(l) if l.state == state && l.percent.abs_diff(candidate) <= 2 => {
                         l.percent
                     }
                     _ => candidate,
@@ -194,6 +210,8 @@ impl Battery {
 
             ticker.next().await;
             vbat_mv = sample_mv(&mut adc).await;
+            recent[idx] = vbat_mv;
+            idx = (idx + 1) % 3;
         }
     }
 }
