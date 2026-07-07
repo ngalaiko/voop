@@ -22,9 +22,24 @@ struct CalculateMetricsTests {
         #expect(CalculateMetrics.cadenceDistance(points: points, config: config) == 80)
     }
 
-    @Test func distanceIgnoresCounterWrapAndResets() {
-        // A backward delta (16-bit counter wrap or sensor reset) must contribute nothing.
+    @Test func distanceCountsCounterWrapWithinCloseInterval() {
+        // The u16 counter wraps (65000 → 100 = 636 revs forward). Points 1 s apart are
+        // provably close (uptime gap < 60 s), so the wrapping delta is trusted: 636 × 4 m.
         let points = [point(0, revs: 65000), point(1, revs: 100)]
+        #expect(CalculateMetrics.cadenceDistance(points: points, config: config) == Double(636 * 4))
+    }
+
+    @Test func distanceIgnoresSensorResets() {
+        // A battery pull restarts the counter near zero; the wrapping delta is huge (≥ 1000),
+        // which can't be real pedaling within a close interval → contributes nothing.
+        let points = [point(0, revs: 500), point(1, revs: 0)]
+        #expect(CalculateMetrics.cadenceDistance(points: points, config: config) == 0)
+    }
+
+    @Test func distanceDropsBackwardDeltasAcrossBootBoundaries() {
+        // With no valid uptime bound (device rebooted between the points), a wrap and a reset
+        // are indistinguishable — any non-forward delta is dropped, as before.
+        let points = [point(0, revs: 65000, uptimeMs: 5_000_000), point(1, revs: 100, uptimeMs: 1000)]
         #expect(CalculateMetrics.cadenceDistance(points: points, config: config) == 0)
     }
 

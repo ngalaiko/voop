@@ -30,17 +30,33 @@ enum CalculateMetrics {
     }
 
     /// Distance derived from crank revolutions, gear ratio, and wheel circumference.
-    /// Sums forward crank-rev deltas to ignore counter resets/wraps.
+    /// Sums forward crank-rev deltas (wrap-aware — see `crankRevDelta`).
     static func cadenceDistance(points: [TimestampedPoint], config: Config = .init()) -> Double {
         guard points.count >= 2 else { return 0 }
         var total = 0.0
         for i in 1 ..< points.count {
-            let revDelta = Int32(points[i].cumulativeCrankRevs) - Int32(points[i - 1].cumulativeCrankRevs)
+            let revDelta = crankRevDelta(from: points[i - 1], to: points[i])
             if revDelta > 0 {
                 total += Double(revDelta) * config.gearRatio * config.wheelCircumferenceMeters
             }
         }
         return total
+    }
+
+    /// Crank-rev advance between two points, wrap-aware. Within a confirmed-close interval
+    /// (uptime gap < 60 s, the same gate the event-time path uses) the u16 counter can wrap at
+    /// most once and a real advance can't exceed ~200 revs — so the wrapping delta is trusted
+    /// when small, and a large one reads as a sensor reset (battery pull) contributing nothing.
+    /// Without that bound (boot/pause boundary) fall back to dropping any non-forward delta:
+    /// there a wrap and a reset are indistinguishable.
+    static func crankRevDelta(from prev: TimestampedPoint, to cur: TimestampedPoint) -> Int {
+        let uptimeDeltaMs = cur.uptimeMs &- prev.uptimeMs
+        if uptimeDeltaMs > 0, uptimeDeltaMs < 60000 {
+            let wrapped = cur.cumulativeCrankRevs &- prev.cumulativeCrankRevs
+            return wrapped < 1000 ? Int(wrapped) : 0
+        }
+        let delta = Int32(cur.cumulativeCrankRevs) - Int32(prev.cumulativeCrankRevs)
+        return delta > 0 ? Int(delta) : 0
     }
 
     static func compute(ride: Ride, config: Config = .init()) -> RideMetrics {
@@ -80,7 +96,7 @@ enum CalculateMetrics {
             var speedKph = 0.0
             var cadenceRpm = 0.0
             if interval > 0 {
-                let revDelta = Int32(points[i].cumulativeCrankRevs) - Int32(points[i - 1].cumulativeCrankRevs)
+                let revDelta = crankRevDelta(from: points[i - 1], to: points[i])
                 if revDelta > 0 {
                     cadenceRpm = Double(revDelta) / interval * 60.0
                     let distanceM = Double(revDelta) * config.gearRatio * config.wheelCircumferenceMeters
