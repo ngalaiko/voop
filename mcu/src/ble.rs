@@ -42,15 +42,25 @@ impl Ble {
         embassy_futures::join::join(
             async { mpsl.run().await },
             async {
-                let (runner_result, _, _) = embassy_futures::join::join3(
+                // select, not join: peripheral::run and central::run never return, so a
+                // join could never complete — a runner failure would leave the host dead
+                // (both roles parked on pending operations) with the error log unreachable.
+                // Any side ending means BLE is unrecoverable: log it and reset the SoC.
+                match embassy_futures::select::select3(
                     runner.run_with_handler(&central::CscEventHandler),
                     peripheral::run(&stack),
                     central::run(&stack),
                 )
-                .await;
-                if let Err(e) = runner_result {
-                    log::warn!("[BLE] runner error: {:?}", e);
+                .await
+                {
+                    embassy_futures::select::Either3::First(Err(e)) => {
+                        log::error!("[BLE] runner error: {:?}", e);
+                    }
+                    _ => log::error!("[BLE] task ended unexpectedly"),
                 }
+                // Let the USB logger flush the line, then reboot.
+                embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
+                cortex_m::peripheral::SCB::sys_reset();
             },
         )
         .await;
