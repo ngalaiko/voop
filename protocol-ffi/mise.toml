@@ -2,12 +2,12 @@
 description = "Compile voop-protocol-ffi: macOS cdylib (for bindgen) and iOS staticlibs (for xcframework)"
 sources = ["src/**/*.rs", "Cargo.toml", "../protocol/src/**/*.rs", "../protocol/Cargo.toml"]
 outputs = [
-  "../target/release/libvoop_protocol.dylib",
-  "../target/aarch64-apple-ios/release/libvoop_protocol.a",
-  "../target/aarch64-apple-ios-sim/release/libvoop_protocol.a",
+  "../target/release-ffi/libvoop_protocol.dylib",
+  "../target/aarch64-apple-ios/release-ffi/libvoop_protocol.a",
+  "../target/aarch64-apple-ios-sim/release-ffi/libvoop_protocol.a",
 ]
 run = """
-cargo build -p voop-protocol-ffi --release
-cargo build -p voop-protocol-ffi --release --target aarch64-apple-ios
-cargo build -p voop-protocol-ffi --release --target aarch64-apple-ios-sim
+cargo build -p voop-protocol-ffi --profile release-ffi
+cargo build -p voop-protocol-ffi --profile release-ffi --target aarch64-apple-ios
+cargo build -p voop-protocol-ffi --profile release-ffi --target aarch64-apple-ios-sim
 """

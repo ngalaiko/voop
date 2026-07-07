@@ -36,13 +36,13 @@ xcrun simctl launch --console "iPhone 17" com.galaiko.voop
 [tasks.bindgen]
 description = "Generate Swift bindings and C headers from the macOS dylib"
 depends = ["//protocol-ffi:build"]
-sources = ["../target/release/libvoop_protocol.dylib"]
+sources = ["../target/release-ffi/libvoop_protocol.dylib"]
 outputs = ["Voop/Generated/voop_protocol.swift", "Voop/Generated/voop_protocolFFI.h"]
 run = """
 mkdir -p Voop/Generated
 cargo run -p voop-protocol-ffi --features uniffi-cli --bin uniffi-bindgen -- \
   generate \
-  --library ../target/release/libvoop_protocol.dylib \
+  --library ../target/release-ffi/libvoop_protocol.dylib \
   --language swift \
   --out-dir Voop/Generated/
 """
@@ -51,8 +51,8 @@ cargo run -p voop-protocol-ffi --features uniffi-cli --bin uniffi-bindgen -- \
 description = "Bundle device + simulator staticlibs into an XCFramework"
 depends = [":bindgen"]
 sources = [
-  "../target/aarch64-apple-ios/release/libvoop_protocol.a",
-  "../target/aarch64-apple-ios-sim/release/libvoop_protocol.a",
+  "../target/aarch64-apple-ios/release-ffi/libvoop_protocol.a",
+  "../target/aarch64-apple-ios-sim/release-ffi/libvoop_protocol.a",
   "Voop/Generated/voop_protocolFFI.h",
 ]
 outputs = ["VoopProtocol.xcframework/Info.plist"]
@@ -63,9 +63,9 @@ cp Voop/Generated/voop_protocolFFI.modulemap xcframework-headers/module.modulema
 
 rm -rf VoopProtocol.xcframework
 xcodebuild -create-xcframework \
-  -library ../target/aarch64-apple-ios/release/libvoop_protocol.a \
+  -library ../target/aarch64-apple-ios/release-ffi/libvoop_protocol.a \
   -headers xcframework-headers/ \
-  -library ../target/aarch64-apple-ios-sim/release/libvoop_protocol.a \
+  -library ../target/aarch64-apple-ios-sim/release-ffi/libvoop_protocol.a \
   -headers xcframework-headers/ \
   -output VoopProtocol.xcframework
 rm -rf xcframework-headers

@@ -6,4 +6,15 @@ resolver = "2"
 [profile.release]
 opt-level = "s"
 panic = "abort"
+# Nothing in the workspace relies on wrapping arithmetic (CSC wrap math lives in iOS with
+# explicit &- operators), so keep the same trap-on-overflow behavior as debug builds instead
+# of silently wrapping in the field.
+overflow-checks = true
+
+# For the staticlib linked into the iOS app: UniFFI turns unwinding Rust panics into Swift
+# errors via catch_unwind — with the firmware's panic=abort a Rust panic would hard-crash
+# the whole app instead.
+[profile.release-ffi]
+inherits = "release"
+panic = "unwind"
 
