@@ -234,10 +234,15 @@ pub async fn run(stack: &Stack<'_, MyController, DefaultPacketPool>) {
                     loop {
                         let notif = csc_listener.next().await;
                         let data = notif.as_ref();
-                        // CSC Measurement, crank present (flags bit 1): [flags][revs u16][event_time u16].
-                        if data.len() >= 5 && (data[0] & 0x02) != 0 {
-                            let revs = u16::from_le_bytes([data[1], data[2]]);
-                            let event_time = u16::from_le_bytes([data[3], data[4]]);
+                        // CSC Measurement: [flags u8], then wheel data when flags bit 0 is set
+                        // (u32 revs + u16 event time — combined speed+cadence sensors send it),
+                        // then crank data when flags bit 1 is set ([revs u16][event_time u16]).
+                        // The wheel block must be skipped, or its bytes get read as crank revs.
+                        let flags = data.first().copied().unwrap_or(0);
+                        let off = if flags & 0x01 != 0 { 7 } else { 1 };
+                        if (flags & 0x02) != 0 && data.len() >= off + 4 {
+                            let revs = u16::from_le_bytes([data[off], data[off + 1]]);
+                            let event_time = u16::from_le_bytes([data[off + 2], data[off + 3]]);
                             if Some(revs) != last_revs {
                                 crank_tx.send(CrankSample { revs, event_time });
                                 last_revs = Some(revs);
