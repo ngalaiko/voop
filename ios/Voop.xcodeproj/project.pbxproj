@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		00AF8C17A3091193628C2768 /* voop_protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22FF732CA019D0D7F9529D6 /* voop_protocol.swift */; };
+		088DC6094635340A0AD2452D /* RideEndNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1035AD8392C72F08C4939BD5 /* RideEndNotifier.swift */; };
 		10B7C2FDCD242C9B99E18CDF /* VoopProtocol.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = E2D6A52B78279D30A374F2BA /* VoopProtocol.xcframework */; };
 		1C9B649A1A8864C5ABD3FE47 /* HealthKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB05AFFA9C5717810E1C5B3 /* HealthKitService.swift */; };
 		22BA344A7633874B135E525E /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F99DEC45EEEC577A6BF3754 /* MainView.swift */; };
@@ -74,6 +75,7 @@
 
 /* Begin PBXFileReference section */
 		0B95F2B14E8398297E4B3361 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		1035AD8392C72F08C4939BD5 /* RideEndNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideEndNotifier.swift; sourceTree = "<group>"; };
 		125F26F0973B842A1480B272 /* Voop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Voop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2061BD96C2B27FDB340E1FAF /* RideDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideDetailView.swift; sourceTree = "<group>"; };
 		2323F51F0C727CAB37EEDA1B /* VoopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoopApp.swift; sourceTree = "<group>"; };
@@ -169,6 +171,7 @@
 				8A860B5266B8F9CF030CC353 /* DemoData.swift */,
 				3F99DEC45EEEC577A6BF3754 /* MainView.swift */,
 				81860989184021A98870F32E /* RideActivityController.swift */,
+				1035AD8392C72F08C4939BD5 /* RideEndNotifier.swift */,
 				5368C6D6371FD4DE59571CAD /* RootTabView.swift */,
 				A2CD3324FBDA929D8A315D4B /* SettingsView.swift */,
 				474A33C5C1198867EFBFFF7D /* DesignSystem */,
@@ -485,6 +488,7 @@
 				BF3CB19613C9A1DD066852C3 /* RideActivityAttributes.swift in Sources */,
 				75F8106462561E8882514BA6 /* RideActivityController.swift in Sources */,
 				510A5B1169FFE4FECE6A5A62 /* RideDetailView.swift in Sources */,
+				088DC6094635340A0AD2452D /* RideEndNotifier.swift in Sources */,
 				E816C349692E70F683752C69 /* RootTabView.swift in Sources */,
 				E6FBA534D5E9C839C8D0BAF3 /* SettingsView.swift in Sources */,
 				2688E12FFD1A33FC898E61A4 /* SetupView.swift in Sources */,

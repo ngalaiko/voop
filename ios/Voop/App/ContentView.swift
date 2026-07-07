@@ -13,5 +13,12 @@ struct ContentView: View {
                 SetupView()
             }
         }
+        // Notification permission for the ride-end notification, asked only once there's
+        // something to notify about (a paired device). `.task` runs on scene appear — i.e. a
+        // real foreground where the prompt can show — and re-runs when pairing completes.
+        .task(id: appModel.isDevicePaired) {
+            guard appModel.isDevicePaired else { return }
+            await appModel.endNotifier.ensureAuthorization()
+        }
     }
 }

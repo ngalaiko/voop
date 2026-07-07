@@ -10,6 +10,7 @@ final class AppModel {
     let pointStore: PointStore
     let settings: AppSettings
     let activityController = RideActivityController()
+    let endNotifier = RideEndNotifier()
 
     private(set) var detectedRides: [Ride] = []
     private(set) var isDevicePaired: Bool = UserDefaults.standard.bool(forKey: "isDevicePaired")
@@ -243,9 +244,14 @@ final class AppModel {
         if isCadenceLive != live { isCadenceLive = live }
     }
 
-    /// Drives the Live Activity to match the ongoing ride (or ends it when none is in progress).
+    /// Drives the Live Activity to match the ongoing ride (or ends it when none is in progress),
+    /// and keeps the pending ride-end notification aimed at the moment the ride will end.
     func reconcileActivity(at now: Date = .now) async {
         guard let ride = ongoingRide(at: now) else {
+            // Normally the pending ride-end notification has already fired — its fire time is
+            // the same moment the ride stopped counting as ongoing. Cancelling here only sweeps
+            // up the exceptions: a deleted ride, or a stale schedule from a previous session.
+            endNotifier.cancelPending()
             await activityController.reconcile(rideStartDate: nil, rideEndDate: nil, staleDate: nil, state: nil)
             return
         }
@@ -269,6 +275,15 @@ final class AppModel {
         // Stale once the ride would no longer count as ongoing (last point + stop-pause gap), so
         // the system stops the live timer even if the app is killed before the heartbeat ends it.
         let staleDate = ride.endDate.addingTimeInterval(settings.gapThreshold)
+        // The ride-end notification fires at that same moment. Only rides that qualify get
+        // one — short rolls end silently; a ride that qualifies mid-way schedules on the tick
+        // it crosses the gate.
+        if DetectRides.qualifies(ride, settings: settings) {
+            endNotifier.reschedule(fireAt: staleDate, distanceMeters: distance,
+                                   rideDuration: ride.duration, at: now)
+        } else {
+            endNotifier.cancelPending()
+        }
         await activityController.reconcile(
             rideStartDate: ride.startDate,
             rideEndDate: ride.endDate,
