@@ -74,7 +74,12 @@ final class RideActivityController {
         finalState.elapsedInterval = startDate ... frozenEnd
         // See `reconcile`: `Activity` isn't Sendable, but it's main-actor-only here.
         nonisolated(unsafe) let act = current
-        await act.end(ActivityContent(state: finalState, staleDate: nil), dismissalPolicy: .default)
+        // Immediate removal, not `.default` (which parks the "Ride ended" card on the Lock
+        // Screen for up to 4 h): the ride-end summary arrives as a notification, so the frozen
+        // card would sit next to it as a duplicate. The frozen final state still matters for
+        // the killed-app path, where the widget renders it via `staleDate` until the app runs
+        // again and ends the activity.
+        await act.end(ActivityContent(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
     }
 
     private func start(
