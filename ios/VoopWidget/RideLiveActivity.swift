@@ -116,12 +116,17 @@ private struct RideMetric: View {
     }
 }
 
+// Forced metric, matching the app's VoopFormat: measurement formatting with `.road` (or
+// default) usage converts to miles/mph on US-region devices, and the Live Activity would
+// disagree with the in-app numbers.
 private func distanceText(_ meters: Double) -> String {
-    Measurement(value: meters, unit: UnitLength.meters)
-        .formatted(.measurement(width: .abbreviated, usage: .road))
+    if meters < 1000 {
+        return "\(Int(meters.rounded())) m"
+    }
+    let km = meters / 1000
+    return km.formatted(.number.precision(.fractionLength(km >= 100 ? 0 : 1))) + " km"
 }
 
 private func speedText(_ kph: Double) -> String {
-    Measurement(value: kph.rounded(), unit: UnitSpeed.kilometersPerHour)
-        .formatted(.measurement(width: .abbreviated))
+    "\(Int(kph.rounded())) km/h"
 }
