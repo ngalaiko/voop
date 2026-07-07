@@ -779,9 +779,11 @@ public func FfiConverterTypeDataPoint_lower(_ value: DataPoint) -> RustBuffer {
 /**
  * Snapshot read from the STATUS_CHAR_UUID characteristic.
  *
- * Wire format (4 bytes, fixed):
- * [mcu_percent u8][mcu_state u8][flags u8][sensor_battery u8]
+ * Wire format (5 bytes, fixed):
+ * [version u8][mcu_percent u8][mcu_state u8][flags u8][sensor_battery u8]
  * flags: bit 0 = sensor_connected, bit 1 = sensor_battery_present
+ * Byte 0 is PROTOCOL_VERSION — the same fail-closed rule as DataPoint, so a status layout
+ * change can't silently misparse (or blank out) on an app built from another revision.
  */
 public struct DeviceStatus {
     public var mcuBattery: BatteryStatus
@@ -1055,6 +1057,12 @@ fileprivate struct FfiConverterOptionTypeDeviceStatus: FfiConverterRustBuffer {
         }
     }
 }
+public func protocolVersion() -> UInt8  {
+    return try!  FfiConverterUInt8.lift(try! rustCall() {
+    uniffi_voop_protocol_fn_func_protocol_version($0
+    )
+})
+}
 public func serviceUuid() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_voop_protocol_fn_func_service_uuid($0
@@ -1108,6 +1116,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_voop_protocol_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_voop_protocol_checksum_func_protocol_version() != 29808) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_voop_protocol_checksum_func_service_uuid() != 61102) {
         return InitializationResult.apiChecksumMismatch

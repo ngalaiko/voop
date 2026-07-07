@@ -34,9 +34,11 @@ pub struct BatteryStatus {
 
 /// Snapshot read from the STATUS_CHAR_UUID characteristic.
 ///
-/// Wire format (4 bytes, fixed):
-///   [mcu_percent u8][mcu_state u8][flags u8][sensor_battery u8]
+/// Wire format (5 bytes, fixed):
+///   [version u8][mcu_percent u8][mcu_state u8][flags u8][sensor_battery u8]
 ///   flags: bit 0 = sensor_connected, bit 1 = sensor_battery_present
+/// Byte 0 is PROTOCOL_VERSION — the same fail-closed rule as DataPoint, so a status layout
+/// change can't silently misparse (or blank out) on an app built from another revision.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct DeviceStatus {
@@ -47,11 +49,12 @@ pub struct DeviceStatus {
 }
 
 impl DeviceStatus {
-    pub fn pack(&self) -> [u8; 4] {
+    pub fn pack(&self) -> [u8; 5] {
         let mut flags: u8 = 0;
         if self.sensor_connected { flags |= 0x01; }
         if self.sensor_battery.is_some() { flags |= 0x02; }
         [
+            PROTOCOL_VERSION,
             self.mcu_battery.percent,
             self.mcu_battery.state as u8,
             flags,
@@ -60,17 +63,17 @@ impl DeviceStatus {
     }
 
     pub fn unpack(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 4 { return None; }
-        let state = match bytes[1] {
+        if bytes.len() < 5 || bytes[0] != PROTOCOL_VERSION { return None; }
+        let state = match bytes[2] {
             0 => BatteryState::Charging,
             1 => BatteryState::Discharging,
             _ => return None,
         };
-        let flags = bytes[2];
+        let flags = bytes[3];
         Some(DeviceStatus {
-            mcu_battery: BatteryStatus { percent: bytes[0], state },
+            mcu_battery: BatteryStatus { percent: bytes[1], state },
             sensor_connected: flags & 0x01 != 0,
-            sensor_battery: if flags & 0x02 != 0 { Some(bytes[3]) } else { None },
+            sensor_battery: if flags & 0x02 != 0 { Some(bytes[4]) } else { None },
         })
     }
 }
@@ -135,6 +138,10 @@ impl DataPoint {
         })
     }
 }
+
+#[cfg(feature = "uniffi")]
+#[uniffi::export]
+fn protocol_version() -> u8 { PROTOCOL_VERSION }
 
 #[cfg(feature = "uniffi")]
 #[uniffi::export]
@@ -227,5 +234,66 @@ mod tests {
         let mut packed = dp.pack();
         packed[0] = PROTOCOL_VERSION.wrapping_add(1); // a different protocol revision
         assert!(DataPoint::unpack(&packed).is_none());
+    }
+
+    // The golden tests pin the exact wire bytes. If one fails, the layout changed: bump
+    // PROTOCOL_VERSION and update the bytes here — never ship a layout change without a bump.
+    #[test]
+    fn data_point_golden_bytes() {
+        let dp = DataPoint {
+            uptime_ms: 0x0102_0304,
+            unix_millis: Some(0x1112_1314_1516_1718),
+            lat_microdeg: Some(0x2122_2324),
+            lon_microdeg: Some(-2),
+            crank_revs: 0x3132,
+            crank_event_time: 0x4142,
+        };
+        #[rustfmt::skip]
+        let expected: [u8; 25] = [
+            1,                                              // version
+            0x04, 0x03, 0x02, 0x01,                         // uptime_ms LE
+            0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, // unix_millis LE
+            0x24, 0x23, 0x22, 0x21,                         // lat LE
+            0xFE, 0xFF, 0xFF, 0xFF,                         // lon = -2 LE
+            0x32, 0x31,                                     // crank_revs LE
+            0x42, 0x41,                                     // crank_event_time LE
+        ];
+        assert_eq!(dp.pack(), expected);
+    }
+
+    #[test]
+    fn device_status_golden_bytes() {
+        let ds = DeviceStatus {
+            mcu_battery: BatteryStatus { percent: 85, state: BatteryState::Discharging },
+            sensor_connected: true,
+            sensor_battery: Some(72),
+        };
+        assert_eq!(ds.pack(), [1, 85, 1, 0x03, 72]);
+    }
+
+    #[test]
+    fn device_status_roundtrips() {
+        let ds = DeviceStatus {
+            mcu_battery: BatteryStatus { percent: 42, state: BatteryState::Charging },
+            sensor_connected: false,
+            sensor_battery: None,
+        };
+        let back = DeviceStatus::unpack(&ds.pack()).expect("unpack");
+        assert_eq!(back.mcu_battery, ds.mcu_battery);
+        assert_eq!(back.sensor_connected, ds.sensor_connected);
+        assert_eq!(back.sensor_battery, ds.sensor_battery);
+    }
+
+    #[test]
+    fn device_status_rejects_mismatched_version_and_short_buffers() {
+        let ds = DeviceStatus {
+            mcu_battery: BatteryStatus { percent: 1, state: BatteryState::Discharging },
+            sensor_connected: true,
+            sensor_battery: Some(9),
+        };
+        let mut packed = ds.pack();
+        packed[0] = PROTOCOL_VERSION.wrapping_add(1);
+        assert!(DeviceStatus::unpack(&packed).is_none());
+        assert!(DeviceStatus::unpack(&ds.pack()[..4]).is_none());
     }
 }

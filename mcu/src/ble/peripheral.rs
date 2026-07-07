@@ -20,9 +20,11 @@ struct BikeService {
     /// Packed DataPoint wire format, 25 bytes fixed (incl. version byte). See DataPoint::pack().
     #[characteristic(uuid = "bece0002-ede4-4b59-8c60-1ee44d963a05", notify, value = [0u8; 25])]
     stream: [u8; 25],
-    /// Current device status snapshot. See voop_protocol::DeviceStatus::pack().
-    #[characteristic(uuid = "bece0003-ede4-4b59-8c60-1ee44d963a05", read, notify, value = [100u8, 0u8, 0u8, 0xFFu8])]
-    status: [u8; 4],
+    /// Current device status snapshot, 5 bytes incl. version byte. See DeviceStatus::pack().
+    /// The all-zero initial value fails version-checked decoding by design; a real snapshot
+    /// is set the moment iOS connects.
+    #[characteristic(uuid = "bece0003-ede4-4b59-8c60-1ee44d963a05", read, notify, value = [0u8; 5])]
+    status: [u8; 5],
     /// iOS writes current unix timestamp (u32 LE) to sync the MCU clock.
     #[characteristic(uuid = "bece0004-ede4-4b59-8c60-1ee44d963a05", write, value = [0u8; 4])]
     time_sync: [u8; 4],

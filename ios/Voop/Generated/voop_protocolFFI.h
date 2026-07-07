@@ -251,6 +251,12 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_FN_FUNC_PROTOCOL_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_FN_FUNC_PROTOCOL_VERSION
+uint8_t uniffi_voop_protocol_fn_func_protocol_version(RustCallStatus *_Nonnull out_status
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_FN_FUNC_SERVICE_UUID
 #define UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_FN_FUNC_SERVICE_UUID
 RustBuffer uniffi_voop_protocol_fn_func_service_uuid(RustCallStatus *_Nonnull out_status
@@ -563,6 +569,12 @@ void ffi_voop_protocol_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_VOOP_PROTOCOL_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_VOOP_PROTOCOL_RUST_FUTURE_COMPLETE_VOID
 void ffi_voop_protocol_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_CHECKSUM_FUNC_PROTOCOL_VERSION
+#define UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_CHECKSUM_FUNC_PROTOCOL_VERSION
+uint16_t uniffi_voop_protocol_checksum_func_protocol_version(void
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_VOOP_PROTOCOL_CHECKSUM_FUNC_SERVICE_UUID
