@@ -116,8 +116,10 @@ struct MainView: View {
         guard case .connected = appModel.ble.connectionState else {
             return Text("Offline").foregroundStyle(.secondary)
         }
-        let live = appModel.ble.deviceStatus?.sensorConnected == true
-            || (appModel.lastCadenceDate.map { Date.now.timeIntervalSince($0) < AppModel.liveCadenceTimeout } ?? false)
+        // `isCadenceLive`, not a `Date.now` window check: stored observable state is what
+        // makes this row go back to "Searching…" when the stream falls silent (same
+        // mechanism as `dayGroups`'s ongoing-ride exclusion).
+        let live = appModel.ble.deviceStatus?.sensorConnected == true || appModel.isCadenceLive
         guard live else { return Text("Searching…").foregroundStyle(.secondary) }
         return connectedValue(percent: appModel.ble.deviceStatus?.sensorBattery.map(Int.init))
     }
@@ -176,7 +178,10 @@ struct MainView: View {
     }
 
     private func dayGroups() -> [DayGroup] {
-        let ongoingID = appModel.ongoingRide()?.id
+        // The stored (heartbeat-driven) id, NOT `ongoingRide()?.id`: a ride ends by time
+        // passing with no data mutation, so a `Date.now` check here would never re-render —
+        // the finished ride stayed out of the list until something unrelated invalidated it.
+        let ongoingID = appModel.ongoingRideID
         let rides = appModel.detectedRides
             .filter { $0.id != ongoingID && DetectRides.qualifies($0, settings: settings) }
             .sorted { $0.startDate > $1.startDate }

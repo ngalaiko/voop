@@ -25,6 +25,18 @@ final class AppModel {
     /// last rpm must not linger as if they were still pedaling.
     static let liveCadenceTimeout: TimeInterval = 5
 
+    /// `lastCadenceDate` freshness as *stored* observable state. Going stale is driven by time,
+    /// not data: when points stop arriving nothing mutates, so a view deriving this from
+    /// `Date.now` at render time never re-renders — it shows the last answer until something
+    /// unrelated invalidates it. The heartbeat drives the transition instead
+    /// (see `refreshTimeDerivedState`).
+    private(set) var isCadenceLive = false
+
+    /// Identity of the ride currently in progress, or nil once the stop-pause gap has elapsed.
+    /// Stored for the same reason as `isCadenceLive`: a ride *ends* by time passing, and views
+    /// (the history list) must observe that transition, not re-derive it on render.
+    private(set) var ongoingRideID: Ride.ID?
+
     private struct LastCrank {
         let revs: UInt16
         let eventTime: UInt16
@@ -52,6 +64,7 @@ final class AppModel {
     private static func key(of point: RawPoint) -> PointKey {
         PointKey(uptimeMs: point.uptimeMs, crankRevs: point.crankRevs, unixMillis: point.unixMillis)
     }
+
     /// Points inserted into the store but not yet flushed to disk; saved in batches.
     private var unsavedCount = 0
     private static let saveBatchSize = 10
@@ -114,6 +127,7 @@ final class AppModel {
                 lastCadenceDate = now
             }
             detectedRides = rides
+            refreshTimeDerivedState()
         }
     #endif
 
@@ -155,6 +169,7 @@ final class AppModel {
                     revs: revs, eventTime: point.crankEventTime, uptimeMs: point.uptimeMs, date: now
                 )
                 lastCadenceDate = now
+                if !isCadenceLive { isCadenceLive = true }
             }
             if let lat = point.latMicrodeg, let lon = point.lonMicrodeg {
                 currentLocation = CLLocationCoordinate2D(
@@ -209,12 +224,23 @@ final class AppModel {
     }
 
     /// The ride currently in progress: the most recent segment, if the stop-pause gap since its
-    /// last point hasn't elapsed yet. Shared by the live card (`MainView`) and the Live Activity.
+    /// last point hasn't elapsed yet. For time-driven callers (the per-second live card, the
+    /// heartbeat). Views that must *react* to the ended transition observe `ongoingRideID`.
     func ongoingRide(at now: Date = .now) -> Ride? {
         guard let last = detectedRides.last,
               now.timeIntervalSince(last.endDate) < settings.gapThreshold
         else { return nil }
         return last
+    }
+
+    /// Recomputes the observable state that decays with time rather than with data
+    /// (`ongoingRideID`, `isCadenceLive`). Assigns only on change so the 3 s heartbeat doesn't
+    /// invalidate observing views when nothing actually transitioned.
+    private func refreshTimeDerivedState(at now: Date = .now) {
+        let ongoing = ongoingRide(at: now)?.id
+        if ongoingRideID != ongoing { ongoingRideID = ongoing }
+        let live = lastCadenceDate.map { now.timeIntervalSince($0) < Self.liveCadenceTimeout } ?? false
+        if isCadenceLive != live { isCadenceLive = live }
     }
 
     /// Drives the Live Activity to match the ongoing ride (or ends it when none is in progress).
@@ -260,6 +286,7 @@ final class AppModel {
             // Also acts as the batch-save heartbeat, so pending points are durable within a few
             // seconds even on a slow trickle that never reaches `saveBatchSize`.
             flush()
+            refreshTimeDerivedState()
             await reconcileActivity()
             try? await Task.sleep(for: .seconds(3))
         }
@@ -325,6 +352,9 @@ final class AppModel {
 
     private func redetect() {
         detectedRides = DetectRides.detect(points: allPoints, gapThreshold: settings.gapThreshold)
+        // In the same pass, so there is no window where a fresh segment sits in `detectedRides`
+        // but isn't yet excluded from the history list as the ongoing ride.
+        refreshTimeDerivedState()
     }
 
     /// Coalesced re-detection for the hot per-point path: collapses a burst of points (e.g. a
@@ -336,8 +366,8 @@ final class AppModel {
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard let self else { return }
-            self.redetectPending = false
-            self.redetect()
+            redetectPending = false
+            redetect()
         }
     }
 }
