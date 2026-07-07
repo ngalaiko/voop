@@ -60,6 +60,19 @@ final class AppModel {
     /// replay) collapses into one re-derive instead of a full O(n log n) pass per point.
     private var redetectPending = false
 
+    /// Memoized per-ride metrics. Keyed by ride identity (stable start date), point count
+    /// (rides are append-only, so a grown ride naturally misses), and the gear/wheel config.
+    /// Without this the ride list recomputed every historical ride's metrics on every List
+    /// render — every second while riding, over the whole history.
+    private var metricsCache: [MetricsKey: RideMetrics] = [:]
+
+    private struct MetricsKey: Hashable {
+        let rideID: Ride.ID
+        let pointCount: Int
+        let gearRatio: Double
+        let wheelCircumferenceMeters: Double
+    }
+
     /// App-lifetime pipeline tasks. Deliberately retained (and retaining self) for the life of
     /// the process — see `init`.
     private var ingestTask: Task<Void, Never>?
@@ -159,6 +172,27 @@ final class AppModel {
             // burst) it floods the system's update budget while `detectedRides` is still stale
             // behind the redetect debounce anyway. The 3 s heartbeat reconciles instead.
         }
+    }
+
+    /// Cached metrics for a ride (see `metricsCache`).
+    func metrics(for ride: Ride) -> RideMetrics {
+        let key = MetricsKey(
+            rideID: ride.id,
+            pointCount: ride.points.count,
+            gearRatio: settings.gearRatio,
+            wheelCircumferenceMeters: settings.wheelCircumferenceMeters
+        )
+        if let cached = metricsCache[key] { return cached }
+        // Stale keys (a growing ride, changed settings) accumulate slowly; reset rather than
+        // track precise invalidation.
+        if metricsCache.count > 10000 { metricsCache.removeAll(keepingCapacity: true) }
+        let computed = CalculateMetrics.compute(
+            ride: ride,
+            config: .init(gearRatio: settings.gearRatio,
+                          wheelCircumferenceMeters: settings.wheelCircumferenceMeters)
+        )
+        metricsCache[key] = computed
+        return computed
     }
 
     /// Current cadence, or 0 when the stream has gone quiet (see `liveCadenceTimeout`).

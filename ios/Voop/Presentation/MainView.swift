@@ -162,7 +162,7 @@ struct MainView: View {
     }
 
     private func avgCadence(_ ride: Ride) -> String {
-        "avg \(Int(CalculateMetrics.compute(ride: ride, config: config).averageCadenceRpm)) rpm"
+        "avg \(Int(appModel.metrics(for: ride).averageCadenceRpm)) rpm"
     }
 
     // MARK: - Data
@@ -172,7 +172,7 @@ struct MainView: View {
     }
 
     private func distanceMeters(_ ride: Ride) -> Double {
-        CalculateMetrics.cadenceDistance(points: ride.points, config: config)
+        appModel.metrics(for: ride).totalDistanceMeters
     }
 
     private func dayGroups() -> [DayGroup] {
