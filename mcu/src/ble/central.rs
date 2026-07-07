@@ -3,7 +3,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 
-use embassy_time::{Duration, Timer};
+use embassy_time::{with_timeout, Duration, Timer};
 use trouble_host::prelude::*;
 
 use super::MyController;
@@ -139,10 +139,19 @@ pub async fn run(stack: &Stack<'_, MyController, DefaultPacketPool>) {
             },
         };
 
-        let conn = match central.connect_ext(&connect_config).await {
-            Ok(c) => c,
-            Err(e) => {
+        // Bounded: connect_ext awaits a connection-complete event indefinitely, so a sensor
+        // that vanished between the scan report and here (out of range, battery pulled)
+        // would park this task forever and cadence would never recover.
+        let conn = match with_timeout(Duration::from_secs(10), central.connect_ext(&connect_config))
+            .await
+        {
+            Ok(Ok(c)) => c,
+            Ok(Err(e)) => {
                 log::warn!("[BLE central] connect error: {:?}", e);
+                continue;
+            }
+            Err(_) => {
+                log::warn!("[BLE central] connect timeout, rescanning");
                 continue;
             }
         };
