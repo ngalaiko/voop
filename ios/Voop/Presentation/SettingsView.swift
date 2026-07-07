@@ -56,11 +56,15 @@ struct SettingsView: View {
                 Text("Filters out walking or short rolls. A pause longer than the threshold ends a ride.")
             }
 
+            // Generated on demand: serializing the full point history on every Settings
+            // appearance blocks the main actor for seconds once history grows.
             Section("Data") {
                 if let exportURL {
                     ShareLink("Export Raw Data (CSV)", item: exportURL)
                 } else {
-                    Text("Export Raw Data (CSV)").foregroundStyle(.secondary)
+                    Button("Export Raw Data (CSV)") {
+                        exportURL = try? appModel.writeCSVExport()
+                    }
                 }
             }
 
@@ -70,7 +74,6 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .task { exportURL = try? appModel.writeCSVExport() }
     }
 
     private var appVersion: String {
