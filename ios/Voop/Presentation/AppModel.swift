@@ -26,6 +26,12 @@ final class AppModel {
     /// last rpm must not linger as if they were still pedaling.
     static let liveCadenceTimeout: TimeInterval = 5
 
+    /// Hold Health sync until the point stream has been quiet for this long: a reconnect
+    /// replay re-derives rides while their point sets are still growing, and syncing mid-burst
+    /// would mirror a half-delivered ride, then churn Health replacing it. Ended rides aren't
+    /// going anywhere — a few extra seconds costs nothing.
+    private static let healthSyncQuietWindow: TimeInterval = 10
+
     /// `lastCadenceDate` freshness as *stored* observable state. Going stale is driven by time,
     /// not data: when points stop arriving nothing mutates, so a view deriving this from
     /// `Date.now` at render time never re-renders — it shows the last answer until something
@@ -115,8 +121,13 @@ final class AppModel {
     }
 
     #if DEBUG
+        /// Set once demo data is loaded, so the Health sweep never mirrors synthetic rides
+        /// into a real Health store.
+        private var demoMode = false
+
         /// Loads synthetic rides + a fake connected device for simulator visual checks.
         func loadDemoData(riding: Bool) {
+            demoMode = true
             isDevicePaired = true
             ble.applyDemoStatus()
             var rides = DemoData.rides
@@ -303,7 +314,40 @@ final class AppModel {
             flush()
             refreshTimeDerivedState()
             await reconcileActivity()
+            await syncRidesToHealth()
             try? await Task.sleep(for: .seconds(3))
+        }
+    }
+
+    /// Mirrors every ended, qualifying ride into Apple Health (see `HealthKitService`). Runs on
+    /// the heartbeat because there is no single "ride finished" event to hook: rides end by time
+    /// passing, appear long after the fact via a reconnect replay, and grow when a disconnect
+    /// splits a replay. Checking `needsSync` first keeps the steady state — everything already
+    /// mirrored — a dictionary lookup per ride per tick.
+    private func syncRidesToHealth(at now: Date = .now) async {
+        #if DEBUG
+            guard !demoMode else { return }
+        #endif
+        guard health.canSave else { return }
+        if let last = lastCadenceDate, now.timeIntervalSince(last) < Self.healthSyncQuietWindow {
+            return
+        }
+        for ride in detectedRides {
+            guard health.needsSync(ride),
+                  // Ended: the stop-pause gap has elapsed, so time alone can't grow it further.
+                  // The same rule excludes the ongoing ride.
+                  now.timeIntervalSince(ride.endDate) >= settings.gapThreshold,
+                  DetectRides.qualifies(ride, settings: settings)
+            else { continue }
+            let config = CalculateMetrics.Config(
+                gearRatio: settings.gearRatio,
+                wheelCircumferenceMeters: settings.wheelCircumferenceMeters
+            )
+            await health.sync(
+                ride: ride,
+                metrics: metrics(for: ride),
+                samples: CalculateMetrics.samples(ride: ride, config: config)
+            )
         }
     }
 
@@ -352,6 +396,10 @@ final class AppModel {
         let removed = Set(toDelete.map(ObjectIdentifier.init))
         allPoints.removeAll { removed.contains(ObjectIdentifier($0)) }
         seenPointKeys.subtract(toDelete.map(Self.key(of:)))
+        // The mirrored Health workout goes with the ride. Fire-and-forget: deletion must not
+        // block the UI, and a failure only leaves an orphan workout the user can remove in Health.
+        let rideID = ride.id
+        Task { await self.health.remove(rideID: rideID) }
         redetect()
     }
 

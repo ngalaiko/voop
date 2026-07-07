@@ -13,12 +13,14 @@ struct ContentView: View {
                 SetupView()
             }
         }
-        // Notification permission for the ride-end notification, asked only once there's
-        // something to notify about (a paired device). `.task` runs on scene appear — i.e. a
-        // real foreground where the prompt can show — and re-runs when pairing completes.
+        // Notification permission for the ride-end notification and Health write access for
+        // workout sync, asked only once there's something to record (a paired device). `.task`
+        // runs on scene appear — i.e. a real foreground where prompts can show — and re-runs
+        // when pairing completes. Sequential: the second sheet appears once the first is decided.
         .task(id: appModel.isDevicePaired) {
             guard appModel.isDevicePaired else { return }
             await appModel.endNotifier.ensureAuthorization()
+            await appModel.health.ensureAuthorization()
         }
     }
 }
