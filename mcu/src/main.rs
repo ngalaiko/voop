@@ -80,6 +80,10 @@ async fn main(spawner: Spawner) {
         p.PPI_CH29, p.PPI_CH30, p.PPI_CH31, p.RNG,
     )
     .expect("ble: failed to initialize");
+    // USB needs HFXO running continuously; MPSL owns the CLOCK peripheral, so the clock must
+    // be requested through it (a raw register write would get stopped when the radio idles).
+    // Requested before the USB task spawns and never released.
+    ble.request_hfclk_forever().expect("hfclk: failed to request");
     let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
     let imu = imu::init(p.TWISPI1, p.P0_07, p.P0_27, p.P1_08, p.P0_11);
 

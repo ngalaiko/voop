@@ -1,6 +1,6 @@
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::Driver;
-use embassy_nrf::{pac, peripherals, Peri};
+use embassy_nrf::{peripherals, Peri};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::UsbDevice;
@@ -32,10 +32,10 @@ impl Usb {
     }
 }
 
+// USB needs HFXO running continuously, but MPSL owns the CLOCK peripheral and would stop a
+// raw-register-started HFCLK whenever the radio goes idle. main() requests the clock through
+// MPSL (Ble::request_hfclk) after BLE init, before the USB device task starts.
 pub fn init(usbd: Peri<'static, peripherals::USBD>) -> (UsbRunner, Usb) {
-    pac::CLOCK.tasks_hfclkstart().write_value(1);
-    while pac::CLOCK.events_hfclkstarted().read() != 1 {}
-
     let driver = Driver::new(usbd, crate::Irqs, HardwareVbusDetect::new(crate::Irqs));
 
     static STATE: StaticCell<State<'static>> = StaticCell::new();

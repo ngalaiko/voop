@@ -19,6 +19,7 @@ pub enum Error {
     MpslInitFailed,
     SdcInitFailed,
     RunnerCrashed,
+    HfclkFailed,
 }
 
 impl core::fmt::Display for Error {
@@ -28,6 +29,7 @@ impl core::fmt::Display for Error {
             Error::MpslInitFailed => write!(f, "MPSL init failed"),
             Error::SdcInitFailed => write!(f, "SDC init failed"),
             Error::RunnerCrashed => write!(f, "BLE runner crashed"),
+            Error::HfclkFailed => write!(f, "HFCLK request failed"),
         }
     }
 }

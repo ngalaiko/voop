@@ -19,6 +19,27 @@ pub struct Ble {
 }
 
 impl Ble {
+    /// Request the high-frequency crystal through MPSL, which owns the CLOCK peripheral, and
+    /// keep it running for the lifetime of the device — USB needs HFXO continuously.
+    ///
+    /// Calls the raw `mpsl_clock_hfclk_src_request` directly: the pinned nrf-mpsl revision's
+    /// `Hfclk` wrapper still calls the removed `mpsl_clock_hfclk_request` symbol and fails to
+    /// link against its own vendored library.
+    pub fn request_hfclk_forever(&self) -> Result<(), Error> {
+        unsafe extern "C" fn hfclk_started(_src: u32) {}
+        let ret = unsafe {
+            mpsl::raw::mpsl_clock_hfclk_src_request(
+                mpsl::raw::MPSL_CLOCK_HF_SRC_XO,
+                Some(hfclk_started),
+            )
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(Error::HfclkFailed)
+        }
+    }
+
     pub async fn run(self) {
         let Ble { mpsl, sdc: controller } = self;
 
