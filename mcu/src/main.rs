@@ -83,8 +83,14 @@ async fn main(spawner: Spawner) {
         panic!("wdt: already running with incompatible config");
     };
 
-    let (usb_runner, usb) = usb::init(p.USBD);
-    let logger = logger::init(usb).expect("logger: failed to initialize");
+    #[cfg(feature = "usb")]
+    let (usb_runner, logger) = {
+        let (usb_runner, usb) = usb::init(p.USBD);
+        let logger = logger::init(usb).expect("logger: failed to initialize");
+        (usb_runner, logger)
+    };
+    // Without the usb feature no logger is ever set, so every log macro in the build
+    // short-circuits at the max-level check (default Off) — zero formatting cost.
     log::info!("Starting");
 
     let gps = gps::init(p.UARTE0, p.P1_11, p.P1_12, p.TIMER1, p.PPI_CH0, p.PPI_CH1);
@@ -96,19 +102,44 @@ async fn main(spawner: Spawner) {
     .expect("ble: failed to initialize");
     // USB needs HFXO running continuously; MPSL owns the CLOCK peripheral, so the clock must
     // be requested through it (a raw register write would get stopped when the radio idles).
-    // Requested before the USB task spawns and never released.
+    // Requested before the USB task spawns and never released. USB is the only reason to
+    // hold it — the lean build skips the request and lets the radio duty-cycle the crystal,
+    // saving the ~250 µA an idle HFXO burns.
+    #[cfg(feature = "usb")]
     ble.request_hfclk_forever().expect("hfclk: failed to request");
-    let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
     let imu = imu::init(p.TWISPI1, p.P0_07, p.P0_27, p.P1_08, p.P0_11);
-    let battery = battery::init(p.SAADC, p.P0_31, p.P0_14);
 
     spawner.spawn(watchdog_task(wdt_handle).expect("wdt: failed to spawn"));
-    spawner.spawn(usb_task(usb_runner).expect("usb: failed to spawn"));
-    spawner.spawn(logger_task(logger).expect("logger: failed to spawn"));
+    #[cfg(feature = "usb")]
+    {
+        spawner.spawn(usb_task(usb_runner).expect("usb: failed to spawn"));
+        spawner.spawn(logger_task(logger).expect("logger: failed to spawn"));
+    }
     spawner.spawn(gps_task(gps).expect("gps: failed to spawn"));
     spawner.spawn(ble_task(ble).expect("ble: failed to spawn"));
-    spawner.spawn(screen_task(screen).expect("screen: failed to spawn"));
     spawner.spawn(imu_task(imu).expect("imu: failed to spawn"));
-    spawner.spawn(battery_task(battery).expect("battery: failed to spawn"));
     spawner.spawn(power_task().expect("power: failed to spawn"));
+
+    #[cfg(feature = "screen")]
+    {
+        let screen = screen::init(p.TWISPI0, p.P0_04, p.P0_05);
+        spawner.spawn(screen_task(screen).expect("screen: failed to spawn"));
+    }
+    #[cfg(feature = "battery")]
+    {
+        let battery = battery::init(p.SAADC, p.P0_31, p.P0_14);
+        spawner.spawn(battery_task(battery).expect("battery: failed to spawn"));
+    }
+    #[cfg(not(feature = "battery"))]
+    {
+        // With the battery task compiled out, nobody holds the divider's bottom leg
+        // (P0.14) low — and P0.31 would float toward the raw BAT net through the top
+        // resistor, past the pin's VDD+0.3 V limit (see battery.rs). Sink it here for
+        // the whole uptime; forget() keeps the pin configured after main returns.
+        core::mem::forget(embassy_nrf::gpio::Output::new(
+            p.P0_14,
+            embassy_nrf::gpio::Level::Low,
+            embassy_nrf::gpio::OutputDrive::Standard,
+        ));
+    }
 }

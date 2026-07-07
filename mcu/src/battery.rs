@@ -24,6 +24,10 @@ pub struct Reading {
 
 /// Below this the BAT net is floating, not a battery: a Li-Po that could still power
 /// anything reads ≥ 3000 mV; the unconnected net reads tens of mV of decaying charge.
+/// ⚠ Only trustworthy while VBUS is absent: with USB in, the unloaded BQ25100 drives the
+/// empty net to a ~3.75–4.18 V charge/terminate/bleed sawtooth (observed 2026-07-07),
+/// which reads as a plausible battery. Dev setups with no pack on the XIAO's pads should
+/// not run this task at all (it's behind the `battery` feature).
 const BATTERY_PRESENT_MV: u16 = 2500;
 
 /// Latest MCU battery reading. Sent whenever the measurement moves (the percent itself is

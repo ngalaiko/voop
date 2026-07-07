@@ -3,6 +3,19 @@ name = "voop"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Dev-bench extras, individually selectable; all off in the lean ride build. The modules
+# always compile (they're only unspawned) so they can't rot.
+#   usb     — USB CDC + the logger that rides on it, plus the always-on HFXO request the
+#             USB peripheral needs (~250 µA the lean build doesn't pay).
+#   screen  — the Expansion Board OLED (single-digit mA while lit).
+#   battery — BAT-net telemetry. Meaningless in the current setup (JST-powered dev board,
+#             nothing on the XIAO's BAT net): with USB in, the unloaded charger drives the
+#             divider to a fake 3.75-4.18 V sawtooth — the "battery %" is fiction.
+usb = []
+screen = []
+battery = []
+
 [dependencies]
 voop-protocol = { path = "../protocol" }
 
