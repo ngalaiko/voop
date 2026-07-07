@@ -1,5 +1,8 @@
 @preconcurrency import CoreBluetooth
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.galaiko.voop", category: "ble")
 
 private nonisolated(unsafe) let mcuServiceUUID = CBUUID(string: serviceUuid())
 private nonisolated(unsafe) let streamCharUUID = CBUUID(string: streamCharUuid())
@@ -45,6 +48,18 @@ final class MCUPeripheral: NSObject, CBPeripheralDelegate, @unchecked Sendable {
             default:
                 break
             }
+        }
+    }
+
+    func peripheral(
+        _: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: (any Error)?
+    ) {
+        // A failed CCCD write means notifications never arm: the connection looks healthy but
+        // no data will ever flow. Don't let that be silent.
+        if let error {
+            log.error("enabling notifications failed for \(characteristic.uuid): \(error)")
         }
     }
 

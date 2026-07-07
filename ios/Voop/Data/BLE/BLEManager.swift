@@ -17,6 +17,11 @@ final class BLEManager: NSObject {
     /// (rediscover or reconnect) once `centralManagerDidUpdateState` reports `.poweredOn`.
     private var restoredPeripheral: CBPeripheral?
 
+    /// Doubling delay before the next rescan after a failure, so a device at range edge doesn't
+    /// spin in a tight scan→connect→fail loop (the MCU side has the matching backoff).
+    private var rescanDelay: TimeInterval = 1
+    private var rescanTask: Task<Void, Never>?
+
     private var dataPointContinuation: AsyncStream<DataPoint>.Continuation?
     private(set) var dataPoints: AsyncStream<DataPoint>
 
@@ -53,6 +58,19 @@ final class BLEManager: NSObject {
     func stopScan() {
         central?.stopScan()
         connectionState = .idle
+    }
+
+    /// Schedules a rescan after the current backoff delay, doubling it (capped at 30 s) for the
+    /// next failure. `didConnect` resets the delay.
+    private func scheduleRescan() {
+        rescanTask?.cancel()
+        let delay = rescanDelay
+        rescanDelay = min(rescanDelay * 2, 30)
+        rescanTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.startScan()
+        }
     }
 
     /// Wraps a CoreBluetooth peripheral in an `MCUPeripheral` and wires its callbacks. Used on
@@ -154,6 +172,8 @@ extension BLEManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         MainActor.assumeIsolated {
             connectingPeripheral = nil
+            rescanTask?.cancel()
+            rescanDelay = 1
             let mcu = attach(peripheral)
             mcu.discoverServices()
             connectionState = .connected
@@ -169,7 +189,7 @@ extension BLEManager: CBCentralManagerDelegate {
             self.peripheral = nil
             self.connectingPeripheral = nil
             connectionState = .disconnected(error)
-            startScan()
+            scheduleRescan()
         }
     }
 
@@ -181,7 +201,7 @@ extension BLEManager: CBCentralManagerDelegate {
         MainActor.assumeIsolated {
             connectingPeripheral = nil
             connectionState = .disconnected(error)
-            startScan()
+            scheduleRescan()
         }
     }
 }
