@@ -14,13 +14,22 @@ final class PointStore {
         container = try ModelContainer(for: RawPoint.self, configurations: config)
     }
 
-    /// Opens the on-disk store, recovering rather than crashing on a corrupt/unreadable file:
-    /// wipe the store (and its SQLite sidecars) and retry once, then fall back to an in-memory
-    /// store so the app still launches. Losing history beats bricking on a bad file.
+    /// Opens the on-disk store, recovering rather than crashing on an unopenable file: move the
+    /// store (and its SQLite sidecars) aside and retry with a fresh one, then fall back to an
+    /// in-memory store so the app still launches.
+    ///
+    /// Moved aside, never deleted: raw points are the app's *only* persisted data, and an open
+    /// failure isn't necessarily corruption — a failed migration after a future `RawPoint`
+    /// schema change, a transient lock, or a full disk land here too. A `.backup-<timestamp>`
+    /// file can be recovered by hand; a deleted one is a silently erased ride history.
     static func openOrRecover() -> PointStore {
         if let store = try? PointStore() { return store }
+        let backupPath = storeURL.path + ".backup-\(Int(Date.now.timeIntervalSince1970))"
         for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: storeURL.path + suffix))
+            try? FileManager.default.moveItem(
+                at: URL(fileURLWithPath: storeURL.path + suffix),
+                to: URL(fileURLWithPath: backupPath + suffix)
+            )
         }
         if let store = try? PointStore() { return store }
         if let store = try? PointStore(inMemory: true) { return store }
