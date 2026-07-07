@@ -25,11 +25,33 @@ final class AppModel {
     /// last rpm must not linger as if they were still pedaling.
     static let liveCadenceTimeout: TimeInterval = 5
 
-    private var lastCrankPoint: (revs: UInt16, eventTime: UInt16, uptimeMs: UInt32, date: Date)?
+    private struct LastCrank {
+        let revs: UInt16
+        let eventTime: UInt16
+        let uptimeMs: UInt32
+        let date: Date
+    }
+
+    private var lastCrankPoint: LastCrank?
 
     /// In-memory mirror of every stored point, kept in detection-time order. Detection reads
     /// this instead of re-fetching the whole store from disk on every incoming point.
     private var allPoints: [RawPoint] = []
+
+    /// Identity of a point as captured on the device — used to drop re-deliveries. The MCU
+    /// removes a point from its buffer only after a notify it believes was delivered, so the
+    /// stream is at-least-once: a disconnect mid-notify re-sends the same point on reconnect.
+    private struct PointKey: Hashable {
+        let uptimeMs: Int
+        let crankRevs: Int
+        let unixMillis: Int?
+    }
+
+    private var seenPointKeys: Set<PointKey> = []
+
+    private static func key(of point: RawPoint) -> PointKey {
+        PointKey(uptimeMs: point.uptimeMs, crankRevs: point.crankRevs, unixMillis: point.unixMillis)
+    }
     /// Points inserted into the store but not yet flushed to disk; saved in batches.
     private var unsavedCount = 0
     private static let saveBatchSize = 10
@@ -84,6 +106,14 @@ final class AppModel {
 
     private func startReceiving() async {
         for await point in ble.dataPoints {
+            // Drop re-deliveries (see `PointKey`): a duplicate is a point already stored, so
+            // neither the live metrics nor the store should see it again.
+            let key = PointKey(
+                uptimeMs: Int(point.uptimeMs),
+                crankRevs: Int(point.crankRevs),
+                unixMillis: point.unixMillis.map(Int.init)
+            )
+            guard seenPointKeys.insert(key).inserted else { continue }
             do {
                 // Every point is a crank event, so it always carries a rev count. Time the
                 // delta by the point's own clocks (crank event time, then MCU uptime), not BLE
@@ -108,7 +138,9 @@ final class AppModel {
                         currentRpm = Int((Double(delta) / dt * 60.0).rounded())
                     }
                 }
-                lastCrankPoint = (revs: revs, eventTime: point.crankEventTime, uptimeMs: point.uptimeMs, date: now)
+                lastCrankPoint = LastCrank(
+                    revs: revs, eventTime: point.crankEventTime, uptimeMs: point.uptimeMs, date: now
+                )
                 lastCadenceDate = now
             }
             if let lat = point.latMicrodeg, let lon = point.lonMicrodeg {
@@ -243,6 +275,7 @@ final class AppModel {
         try? pointStore.delete(toDelete)
         let removed = Set(toDelete.map(ObjectIdentifier.init))
         allPoints.removeAll { removed.contains(ObjectIdentifier($0)) }
+        seenPointKeys.subtract(toDelete.map(Self.key(of:)))
         redetect()
     }
 
@@ -252,6 +285,7 @@ final class AppModel {
     private func reloadPoints() {
         allPoints = ((try? pointStore.fetchAll()) ?? [])
             .sorted { DetectRides.absoluteDate(for: $0) < DetectRides.absoluteDate(for: $1) }
+        seenPointKeys = Set(allPoints.map(Self.key(of:)))
         redetect()
     }
 
