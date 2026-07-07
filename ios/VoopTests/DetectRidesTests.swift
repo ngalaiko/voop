@@ -66,6 +66,48 @@ struct DetectRidesTests {
         #expect(rides[0].points.map(\.cumulativeCrankRevs) == [0, 10, 20, 30])
     }
 
+    @Test func qualifiesAcceptsRealRide() {
+        let settings = AppSettings()
+        settings.minCadenceRpm = 20
+        settings.minDistanceMeters = 500
+        // 120 points, 1 s apart, +1 rev each: 60 rpm, ~119 revs ≈ 720 m at default gearing.
+        let points = (0 ..< 120).map { point(unix: 1000 + UInt32($0), revs: UInt16($0)) }
+        let rides = DetectRides.detect(points: points, gapThreshold: 60)
+        #expect(rides.count == 1)
+        #expect(DetectRides.qualifies(rides[0], settings: settings))
+    }
+
+    @Test func qualifiesRejectsTooShortSegment() {
+        let settings = AppSettings()
+        settings.minCadenceRpm = 20
+        settings.minDistanceMeters = 500
+        // Fast enough (60 rpm) but only ~9 revs ≈ 54 m — far under the distance gate.
+        let points = (0 ..< 10).map { point(unix: 1000 + UInt32($0), revs: UInt16($0)) }
+        let rides = DetectRides.detect(points: points, gapThreshold: 60)
+        #expect(rides.count == 1)
+        #expect(!DetectRides.qualifies(rides[0], settings: settings))
+    }
+
+    @Test func qualificationCadenceSurvivesReplayedNeverSyncedBoot() {
+        // A boot session that never got a time sync, replayed hours later: every point's
+        // resolved date collapses onto its receivedAt (milliseconds apart). Wall-clock cadence
+        // would compute in the thousands of rpm and wave garbage through the gate; the sensor
+        // timing (uptime gap: 6 s per rev = 10 rpm) must be used instead.
+        let settings = AppSettings()
+        settings.minCadenceRpm = 20
+        settings.minDistanceMeters = 0
+        func raw(uptimeMs: UInt32, revs: UInt16, at: TimeInterval) -> RawPoint {
+            RawPoint(from: DataPoint(uptimeMs: uptimeMs, unixMillis: nil,
+                                     latMicrodeg: nil, lonMicrodeg: nil,
+                                     crankRevs: revs, crankEventTime: 0),
+                     receivedAt: Date(timeIntervalSince1970: 9_000_000 + at))
+        }
+        let points = (0 ..< 10).map { raw(uptimeMs: UInt32($0) * 6000, revs: UInt16($0), at: Double($0) * 0.001) }
+        let rides = DetectRides.detect(points: points, gapThreshold: 60)
+        #expect(rides.count == 1)
+        #expect(!DetectRides.qualifies(rides[0], settings: settings))
+    }
+
     @Test func reconstructsPreSyncPointsFromBootSessionAnchor() {
         // Points captured after boot but before the first time sync carry no unixMillis. They
         // must be reconstructed from a later synced point in the same boot via uptimeMs deltas,

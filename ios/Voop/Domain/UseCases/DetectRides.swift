@@ -71,13 +71,18 @@ enum DetectRides {
         return longEnough && fastEnough
     }
 
+    /// Average of the per-interval cadences, timed by the same source chain as the metrics
+    /// (`CalculateMetrics.intervalSeconds`), not wall-clock dates: a never-synced boot session
+    /// replayed after hours collapses every date onto `receivedAt` (milliseconds apart), which
+    /// made wall-clock cadence compute in the thousands of rpm — trivially "qualifying"
+    /// garbage segments as rides.
     private static func averageCadence(points: [TimestampedPoint]) -> Double {
         var sum = 0.0
         var count = 0
         for i in 1 ..< points.count {
-            let dt = points[i].date.timeIntervalSince(points[i - 1].date)
+            let dt = CalculateMetrics.intervalSeconds(from: points[i - 1], to: points[i])
             guard dt > 0 else { continue }
-            let delta = Int32(points[i].cumulativeCrankRevs) - Int32(points[i - 1].cumulativeCrankRevs)
+            let delta = CalculateMetrics.crankRevDelta(from: points[i - 1], to: points[i])
             if delta > 0 {
                 sum += Double(delta) / dt * 60.0
                 count += 1

@@ -120,7 +120,7 @@ enum CalculateMetrics {
     ///      points are < 64 s apart so the u16 event-time counter wrapped at most once;
     ///   2. the raw MCU uptime delta (ms, always present, monotonic within a boot session);
     ///   3. the wall-clock date delta — last resort for pre-sync points dated by `receivedAt`.
-    private static func intervalSeconds(from prev: TimestampedPoint, to cur: TimestampedPoint) -> TimeInterval {
+    static func intervalSeconds(from prev: TimestampedPoint, to cur: TimestampedPoint) -> TimeInterval {
         let uptimeDeltaMs = cur.uptimeMs &- prev.uptimeMs // u32 wrapping; implausibly large on reboot
         let uptimeValid = uptimeDeltaMs > 0 && uptimeDeltaMs < 60000
         if uptimeValid, let a = prev.crankEventTime, let b = cur.crankEventTime {
