@@ -27,6 +27,7 @@ const WHO_AM_I_LSM6DS3TR_C: u8 = 0x6A;
 const REG_CTRL1_XL: u8 = 0x10;
 const REG_CTRL3_C: u8 = 0x12;
 const REG_CTRL6_C: u8 = 0x15;
+const REG_WAKE_UP_SRC: u8 = 0x1B;
 const REG_WAKE_UP_DUR: u8 = 0x5C;
 const REG_WK_THS: u8 = 0x5B;
 const REG_TAP_CFG: u8 = 0x58;
@@ -43,7 +44,10 @@ const CTRL3_C_BDU_IFINC: u8 = 0x44;
 const CTRL6_C_XL_LOW_POWER: u8 = 0x10;
 // TAP_CFG: INTERRUPTS_ENABLE=1 (bit 7) turns on the basic-interrupt block (wake-up et al.) and
 // its slope filter, which removes the constant 1 g so only *changes* in acceleration count.
-const TAP_CFG_ENABLE_INTS: u8 = 0x80;
+// LIR=1 (bit 0) latches the interrupt: INT1 stays high until WAKE_UP_SRC is read. Non-latched
+// pulses could land between awaits (missed re-arm) and stay *continuously* high under sustained
+// acceleration (no edges at all) — latched + clear-on-read gives one clean level per event.
+const TAP_CFG_ENABLE_INTS: u8 = 0x81;
 // MD1_CFG: INT1_WU=1 (bit 5) routes the wake-up event to the INT1 pin.
 const MD1_CFG_INT1_WU: u8 = 0x20;
 // WAKE_UP_DUR = 0 → fire on the first sample over threshold (no debounce).
@@ -95,35 +99,13 @@ impl Imu {
         let mut i2c =
             twim::Twim::new(self.twim, crate::Irqs, self.sda, self.scl, config, tx_buf);
 
-        // Confirm we're talking to the chip we expect before trusting anything.
-        let mut who = [0u8; 1];
-        match i2c.write_read(ADDR, &[REG_WHO_AM_I], &mut who).await {
-            Ok(()) if who[0] == WHO_AM_I_LSM6DS3TR_C => {}
-            Ok(()) => {
-                log::error!("[IMU] unexpected WHO_AM_I: {:#04x}", who[0]);
-                return;
-            }
-            Err(e) => {
-                log::error!("[IMU] WHO_AM_I read failed: {:?}", e);
-                return;
-            }
-        }
-
-        // Bring up the accelerometer in low-power mode and arm the wake-up interrupt on INT1.
-        let setup: [[u8; 2]; 7] = [
-            [REG_CTRL3_C, CTRL3_C_BDU_IFINC],
-            [REG_CTRL6_C, CTRL6_C_XL_LOW_POWER],
-            [REG_CTRL1_XL, CTRL1_XL_52HZ_2G],
-            [REG_WK_THS, WK_THS],
-            [REG_WAKE_UP_DUR, WAKE_UP_DUR_IMMEDIATE],
-            [REG_TAP_CFG, TAP_CFG_ENABLE_INTS],
-            [REG_MD1_CFG, MD1_CFG_INT1_WU],
-        ];
-        for reg in &setup {
-            if let Err(e) = i2c.write(ADDR, reg).await {
-                log::error!("[IMU] register {:#04x} write failed: {:?}", reg[0], e);
-                return;
-            }
+        // Bring-up with retry: a transient NACK at boot must not kill motion detection for
+        // the whole uptime — the IMU is the planned wake source for everything else.
+        let mut attempt = 0u32;
+        while !bring_up(&mut i2c).await {
+            attempt += 1;
+            log::error!("[IMU] bring-up failed (attempt {}), retrying", attempt);
+            Timer::after(Duration::from_secs(5)).await;
         }
         log::info!("[IMU] LSM6DS3TR-C armed for wake-on-motion");
 
@@ -136,14 +118,19 @@ impl Imu {
 
         loop {
             // Parked: the MCU idles here until the IMU flags motion. No polling.
+            // wait_for_high is level-sensed, so a latched event raised before this point is
+            // seen immediately — nothing to miss.
             int1.wait_for_high().await;
             moving_tx.send(true);
             log::info!("[IMU] motion");
 
-            // Moving: the wake line pulses with each jolt. Stay "moving" until it's quiet for
-            // the whole hold window — any edge re-arms the timer.
+            // Moving: clear the latched event, then wait for the next one. Sustained or
+            // repeated motion re-raises INT1 right away and re-arms the hold window; only a
+            // full quiet window ends the "moving" state.
             loop {
-                match select(int1.wait_for_any_edge(), Timer::after(MOTION_HOLD)).await {
+                let mut src = [0u8; 1];
+                let _ = i2c.write_read(ADDR, &[REG_WAKE_UP_SRC], &mut src).await;
+                match select(int1.wait_for_high(), Timer::after(MOTION_HOLD)).await {
                     Either::First(()) => continue,
                     Either::Second(()) => break,
                 }
@@ -152,4 +139,46 @@ impl Imu {
             log::info!("[IMU] still");
         }
     }
+}
+
+/// One bring-up attempt: verify WHO_AM_I, arm the wake-up engine, let the accelerometer
+/// settle, and clear any spurious power-on wake event (the engine can fire right after
+/// CTRL1_XL enable — ST AN5130 recommends discarding the settling period).
+async fn bring_up(i2c: &mut twim::Twim<'static>) -> bool {
+    // Confirm we're talking to the chip we expect before trusting anything.
+    let mut who = [0u8; 1];
+    match i2c.write_read(ADDR, &[REG_WHO_AM_I], &mut who).await {
+        Ok(()) if who[0] == WHO_AM_I_LSM6DS3TR_C => {}
+        Ok(()) => {
+            log::error!("[IMU] unexpected WHO_AM_I: {:#04x}", who[0]);
+            return false;
+        }
+        Err(e) => {
+            log::error!("[IMU] WHO_AM_I read failed: {:?}", e);
+            return false;
+        }
+    }
+
+    // Bring up the accelerometer in low-power mode and arm the wake-up interrupt on INT1.
+    let setup: [[u8; 2]; 7] = [
+        [REG_CTRL3_C, CTRL3_C_BDU_IFINC],
+        [REG_CTRL6_C, CTRL6_C_XL_LOW_POWER],
+        [REG_CTRL1_XL, CTRL1_XL_52HZ_2G],
+        [REG_WK_THS, WK_THS],
+        [REG_WAKE_UP_DUR, WAKE_UP_DUR_IMMEDIATE],
+        [REG_TAP_CFG, TAP_CFG_ENABLE_INTS],
+        [REG_MD1_CFG, MD1_CFG_INT1_WU],
+    ];
+    for reg in &setup {
+        if let Err(e) = i2c.write(ADDR, reg).await {
+            log::error!("[IMU] register {:#04x} write failed: {:?}", reg[0], e);
+            return false;
+        }
+    }
+
+    // ~5 samples at 52 Hz for the slope filter to settle, then discard the phantom event.
+    Timer::after(Duration::from_millis(100)).await;
+    let mut src = [0u8; 1];
+    let _ = i2c.write_read(ADDR, &[REG_WAKE_UP_SRC], &mut src).await;
+    true
 }
