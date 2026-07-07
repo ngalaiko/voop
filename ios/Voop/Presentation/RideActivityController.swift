@@ -77,7 +77,12 @@ final class RideActivityController {
         await act.end(ActivityContent(state: finalState, staleDate: nil), dismissalPolicy: .default)
     }
 
-    private func start(rideStartDate: Date, rideEndDate: Date, staleDate: Date?, state: RideActivityAttributes.ContentState) {
+    private func start(
+        rideStartDate: Date,
+        rideEndDate: Date,
+        staleDate: Date?,
+        state: RideActivityAttributes.ContentState
+    ) {
         let attributes = RideActivityAttributes(startDate: rideStartDate)
         let content = ActivityContent(state: state, staleDate: staleDate)
         do {
