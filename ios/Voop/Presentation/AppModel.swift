@@ -110,7 +110,9 @@ final class AppModel {
             unsavedCount += 1
             if unsavedCount >= Self.saveBatchSize { flush() }
             scheduleRedetect()
-            await reconcileActivity()
+            // No per-point Activity.update: at 1 Hz riding (or thousands of points in a replay
+            // burst) it floods the system's update budget while `detectedRides` is still stale
+            // behind the redetect debounce anyway. The 3 s heartbeat reconciles instead.
         }
     }
 
