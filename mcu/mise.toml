@@ -1,7 +1,8 @@
 [tools]
 "cargo:cargo-binutils" = "latest"
 "cargo:flip-link" = "latest"
-"cargo:uf2conv" = "latest"
+# The flash task runs tools/uf2conv.py via uv (the cargo:uf2conv crate was never used).
+uv = "latest"
 
 [tasks.build]
 description = "Build the firmware"
@@ -11,7 +12,7 @@ cargo objcopy --release -- -O binary target/firmware.bin
 """
 
 [tasks.flash]
-description = "Build, convert to UF2, and flash to XIAO"
+description = "Build and convert to UF2 (copy target/firmware.uf2 to the XIAO-SENSE volume to flash)"
 depends = ["build"]
 run = """
 uv run tools/uf2conv.py target/firmware.bin --family 0xADA52840 --base 0x27000 --output target/firmware.uf2
