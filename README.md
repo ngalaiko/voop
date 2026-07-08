@@ -39,3 +39,5 @@ ios/           Swift/SwiftUI iOS app
 - [Seeed Studio XIAO Expansion Board](https://wiki.seeedstudio.com/Seeeduino-XIAO-Expansion-Board/)
 - [Grove - GPS (Air530)](https://wiki.seeedstudio.com/Grove-GPS-Air530/)
 - [Garmin Cadence Sensor 2](https://www.garmin.com/en-US/p/641212/)
+- [LiPo battery 3.7 V 2000 mAh (103745, 2P-PH 2.0 mm)](https://www.amazon.se/dp/B0D7VSK3MY)
+- [Pololu Mini MOSFET Slide Switch, LV (#2810)](https://www.pololu.com/product/2810)

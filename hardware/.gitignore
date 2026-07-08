@@ -1,0 +1,13 @@
+# rendered output
+build/
+
+# KiCad per-user local settings (auto-generated on open)
+*.kicad_prl
+
+# KiCad backups / caches / autosave
+*-backups/
+*-bak
+*.kicad_sch-bak
+*.kicad_pcb-bak
+_autosave-*
+fp-info-cache
